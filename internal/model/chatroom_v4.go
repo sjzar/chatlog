@@ -20,9 +20,17 @@ func (c *ChatRoomV4) Wrap() *ChatRoom {
 		users = ParseRoomData(c.ExtBuffer)
 	}
 
+	user2DisplayName := make(map[string]string, len(users))
+	for _, user := range users {
+		if user.DisplayName != "" {
+			user2DisplayName[user.UserName] = user.DisplayName
+		}
+	}
+
 	return &ChatRoom{
-		Name:  c.UserName,
-		Owner: c.Owner,
-		Users: users,
+		Name:             c.UserName,
+		Owner:            c.Owner,
+		Users:            users,
+		User2DisplayName: user2DisplayName,
 	}
 }
