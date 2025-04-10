@@ -15,6 +15,9 @@ type Extractor interface {
 	// Extract 从进程中提取密钥
 	Extract(ctx context.Context, proc *model.Process) (string, error)
 
+	// SearchKey 在内存中搜索密钥
+	SearchKey(ctx context.Context, memory []byte) (string, bool)
+
 	SetValidate(validator *decrypt.Validator)
 }
 

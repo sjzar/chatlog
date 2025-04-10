@@ -90,7 +90,7 @@ func (a *Account) GetKey(ctx context.Context) (string, error) {
 		return "", err
 	}
 
-	validator, err := decrypt.NewValidator(process.DataDir, process.Platform, process.Version)
+	validator, err := decrypt.NewValidator(process.Platform, process.Version, process.DataDir)
 	if err != nil {
 		return "", err
 	}

@@ -15,13 +15,17 @@ type Validator struct {
 }
 
 // NewValidator 创建一个仅用于验证的验证器
-func NewValidator(dataDir string, platform string, version int) (*Validator, error) {
+func NewValidator(platform string, version int, dataDir string) (*Validator, error) {
+	dbFile := GetSimpleDBFile(platform, version)
+	dbPath := filepath.Join(dataDir + "/" + dbFile)
+	return NewValidatorWithFile(platform, version, dbPath)
+}
+
+func NewValidatorWithFile(platform string, version int, dbPath string) (*Validator, error) {
 	decryptor, err := NewDecryptor(platform, version)
 	if err != nil {
 		return nil, err
 	}
-	dbFile := GetSimpleDBFile(platform, version)
-	dbPath := filepath.Join(dataDir + "/" + dbFile)
 	d, err := common.OpenDBFile(dbPath, decryptor.GetPageSize())
 	if err != nil {
 		return nil, err

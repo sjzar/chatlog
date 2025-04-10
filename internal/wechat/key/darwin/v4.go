@@ -19,12 +19,26 @@ const (
 	MaxWorkers = 8
 )
 
+var V4KeyPatterns = []KeyPatternInfo{
+	{
+		Pattern: []byte{0x20, 0x66, 0x74, 0x73, 0x35, 0x28, 0x25, 0x00},
+		Offset:  16,
+	},
+	{
+		Pattern: []byte{0x20, 0x66, 0x74, 0x73, 0x35, 0x28, 0x25, 0x00},
+		Offset:  -80,
+	},
+}
+
 type V4Extractor struct {
-	validator *decrypt.Validator
+	validator   *decrypt.Validator
+	keyPatterns []KeyPatternInfo
 }
 
 func NewV4Extractor() *V4Extractor {
-	return &V4Extractor{}
+	return &V4Extractor{
+		keyPatterns: V4KeyPatterns,
+	}
 }
 
 func (e *V4Extractor) Extract(ctx context.Context, proc *model.Process) (string, error) {
@@ -127,8 +141,6 @@ func (e *V4Extractor) findMemory(ctx context.Context, pid uint32, memoryChannel 
 
 // worker processes memory regions to find V4 version key
 func (e *V4Extractor) worker(ctx context.Context, memoryChannel <-chan []byte, resultChannel chan<- string) {
-	keyPattern := []byte{0x20, 0x66, 0x74, 0x73, 0x35, 0x28, 0x25, 0x00}
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -138,47 +150,65 @@ func (e *V4Extractor) worker(ctx context.Context, memoryChannel <-chan []byte, r
 				return
 			}
 
-			index := len(memory)
-
-			for {
+			if key, ok := e.SearchKey(ctx, memory); ok {
 				select {
-				case <-ctx.Done():
-					return // Exit if context cancelled
+				case resultChannel <- key:
 				default:
 				}
-
-				// Find pattern from end to beginning
-				index = bytes.LastIndex(memory[:index], keyPattern)
-				if index == -1 {
-					break // No more matches found
-				}
-
-				// Check if we have enough space for the key
-				if index+16+32 > len(memory) {
-					index -= 1
-					continue
-				}
-
-				// Extract the key data, which is 16 bytes after the pattern and 32 bytes long
-				keyOffset := index + 16
-				keyData := memory[keyOffset : keyOffset+32]
-
-				// Validate key against database header
-				if e.validator.Validate(keyData) {
-					select {
-					case resultChannel <- hex.EncodeToString(keyData):
-						log.Debug().Msg("Key found: " + hex.EncodeToString(keyData))
-						return
-					default:
-					}
-				}
-
-				index -= 1
 			}
 		}
 	}
 }
 
+func (e *V4Extractor) SearchKey(ctx context.Context, memory []byte) (string, bool) {
+	for _, keyPattern := range e.keyPatterns {
+		index := len(memory)
+
+		for {
+			select {
+			case <-ctx.Done():
+				return "", false
+			default:
+			}
+
+			// Find pattern from end to beginning
+			index = bytes.LastIndex(memory[:index], keyPattern.Pattern)
+			if index == -1 {
+				break // No more matches found
+			}
+
+			// Check if we have enough space for the key
+			keyOffset := index + keyPattern.Offset
+			if keyOffset < 0 || keyOffset+32 > len(memory) {
+				index -= 1
+				continue
+			}
+
+			// Extract the key data, which is 16 bytes after the pattern and 32 bytes long
+			keyData := memory[keyOffset : keyOffset+32]
+
+			// Validate key against database header
+			if e.validator.Validate(keyData) {
+				log.Debug().
+					Str("pattern", hex.EncodeToString(keyPattern.Pattern)).
+					Int("offset", keyPattern.Offset).
+					Str("key", hex.EncodeToString(keyData)).
+					Msg("Key found")
+				return hex.EncodeToString(keyData), true
+			}
+
+			index -= 1
+		}
+	}
+
+	return "", false
+}
+
 func (e *V4Extractor) SetValidate(validator *decrypt.Validator) {
 	e.validator = validator
+}
+
+type KeyPatternInfo struct {
+	Pattern []byte
+	Offset  int
 }

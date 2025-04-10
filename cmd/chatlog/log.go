@@ -22,6 +22,8 @@ func initLog(cmd *cobra.Command, args []string) {
 	if Debug {
 		zerolog.SetGlobalLevel(zerolog.DebugLevel)
 	}
+
+	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339})
 }
 
 func initTuiLog(cmd *cobra.Command, args []string) {
