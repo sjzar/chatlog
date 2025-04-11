@@ -30,25 +30,6 @@ type ContactV4 struct {
 	Remark    string `json:"remark"`
 	NickName  string `json:"nick_name"`
 	LocalType int    `json:"local_type"` // 2 群聊; 3 群聊成员(非好友); 5,6 企业微信;
-
-	// ID                  int    `json:"id"`
-
-	// EncryptUserName     string `json:"encrypt_username"`
-	// Flag                int    `json:"flag"`
-	// DeleteFlag          int    `json:"delete_flag"`
-	// VerifyFlag          int    `json:"verify_flag"`
-	// RemarkQuanPin       string `json:"remark_quan_pin"`
-	// RemarkPinYinInitial string `json:"remark_pin_yin_initial"`
-	// PinYinInitial       string `json:"pin_yin_initial"`
-	// QuanPin             string `json:"quan_pin"`
-	// BigHeadUrl          string `json:"big_head_url"`
-	// SmallHeadUrl        string `json:"small_head_url"`
-	// HeadImgMd5          string `json:"head_img_md5"`
-	// ChatRoomNotify      int    `json:"chat_room_notify"`
-	// IsInChatRoom        int    `json:"is_in_chat_room"`
-	// Description         string `json:"description"`
-	// ExtraBuffer         []byte `json:"extra_buffer"`
-	// ChatRoomType        int    `json:"chat_room_type"`
 }
 
 func (c *ContactV4) Wrap() *Contact {

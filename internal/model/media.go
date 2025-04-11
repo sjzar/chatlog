@@ -10,6 +10,7 @@ type Media struct {
 	Path       string `json:"path"`
 	Name       string `json:"name"`
 	Size       int64  `json:"size"`
+	Data       []byte `json:"data"` // for voice
 	ModifyTime int64  `json:"modifyTime"`
 }
 

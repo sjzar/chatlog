@@ -23,6 +23,7 @@ const (
 	ImageFilePattern   = "^HardLinkImage\\.db$"
 	VideoFilePattern   = "^HardLinkVideo\\.db$"
 	FileFilePattern    = "^HardLinkFile\\.db$"
+	VoiceFilePattern   = "^MediaMSG([0-9])?\\.db$"
 )
 
 // MessageDBInfo 保存消息数据库的信息
@@ -46,6 +47,7 @@ type DataSource struct {
 	imageDb *sql.DB
 	videoDb *sql.DB
 	fileDb  *sql.DB
+	voiceDb []*sql.DB
 }
 
 // New 创建一个新的 WindowsV3DataSource
@@ -53,6 +55,7 @@ func New(path string) (*DataSource, error) {
 	ds := &DataSource{
 		messageFiles: make([]MessageDBInfo, 0),
 		messageDbs:   make(map[string]*sql.DB),
+		voiceDb:      make([]*sql.DB, 0),
 	}
 
 	// 初始化消息数据库
@@ -66,6 +69,10 @@ func New(path string) (*DataSource, error) {
 	}
 
 	if err := ds.initMediaDb(path); err != nil {
+		return nil, errors.DBInitFailed(err)
+	}
+
+	if err := ds.initVoiceDb(path); err != nil {
 		return nil, errors.DBInitFailed(err)
 	}
 
@@ -238,6 +245,24 @@ func (ds *DataSource) initMediaDb(path string) error {
 	return nil
 }
 
+func (ds *DataSource) initVoiceDb(path string) error {
+	files, err := util.FindFilesWithPatterns(path, VoiceFilePattern, true)
+	if err != nil {
+		return errors.DBFileNotFound(path, VoiceFilePattern, err)
+	}
+	if len(files) == 0 {
+		return errors.DBFileNotFound(path, VoiceFilePattern, nil)
+	}
+	for _, file := range files {
+		db, err := sql.Open("sqlite3", file)
+		if err != nil {
+			return errors.DBConnectFailed(files[0], err)
+		}
+		ds.voiceDb = append(ds.voiceDb, db)
+	}
+	return nil
+}
+
 // getDBInfosForTimeRange 获取时间范围内的数据库信息
 func (ds *DataSource) getDBInfosForTimeRange(startTime, endTime time.Time) []MessageDBInfo {
 	var dbs []MessageDBInfo
@@ -293,7 +318,7 @@ func (ds *DataSource) GetMessages(ctx context.Context, startTime, endTime time.T
 		}
 
 		query := fmt.Sprintf(`
-            SELECT Sequence, CreateTime, StrTalker, IsSender, 
+            SELECT MsgSvrID, Sequence, CreateTime, StrTalker, IsSender, 
                 Type, SubType, StrContent, CompressContent, BytesExtra
             FROM MSG 
             WHERE %s 
@@ -314,6 +339,7 @@ func (ds *DataSource) GetMessages(ctx context.Context, startTime, endTime time.T
 			var bytesExtra []byte
 
 			err := rows.Scan(
+				&msg.MsgSvrID,
 				&msg.Sequence,
 				&msg.CreateTime,
 				&msg.StrTalker,
@@ -377,7 +403,7 @@ func (ds *DataSource) getMessagesSingleFile(ctx context.Context, dbInfo MessageD
 		}
 	}
 	query := fmt.Sprintf(`
-        SELECT Sequence, CreateTime, StrTalker, IsSender, 
+        SELECT MsgSvrID, Sequence, CreateTime, StrTalker, IsSender, 
             Type, SubType, StrContent, CompressContent, BytesExtra
         FROM MSG 
         WHERE %s 
@@ -406,6 +432,7 @@ func (ds *DataSource) getMessagesSingleFile(ctx context.Context, dbInfo MessageD
 		var compressContent []byte
 		var bytesExtra []byte
 		err := rows.Scan(
+			&msg.MsgSvrID,
 			&msg.Sequence,
 			&msg.CreateTime,
 			&msg.StrTalker,
@@ -652,6 +679,10 @@ func (ds *DataSource) GetMedia(ctx context.Context, _type string, key string) (*
 		return nil, errors.ErrKeyEmpty
 	}
 
+	if _type == "voice" {
+		return ds.GetVoice(ctx, key)
+	}
+
 	md5key, err := hex.DecodeString(key)
 	if err != nil {
 		return nil, errors.DecodeKeyFailed(err)
@@ -723,6 +754,46 @@ func (ds *DataSource) GetMedia(ctx context.Context, _type string, key string) (*
 	}
 
 	return media, nil
+}
+
+func (ds *DataSource) GetVoice(ctx context.Context, key string) (*model.Media, error) {
+	if key == "" {
+		return nil, errors.ErrKeyEmpty
+	}
+
+	query := `
+	SELECT Buf
+	FROM Media
+	WHERE Reserved0 = ? 
+	`
+	args := []interface{}{key}
+
+	for _, db := range ds.voiceDb {
+		rows, err := db.QueryContext(ctx, query, args...)
+		if err != nil {
+			return nil, errors.QueryFailed(query, err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var voiceData []byte
+			err := rows.Scan(
+				&voiceData,
+			)
+			if err != nil {
+				return nil, errors.ScanRowFailed(err)
+			}
+			if len(voiceData) > 0 {
+				return &model.Media{
+					Type: "voice",
+					Key:  key,
+					Data: voiceData,
+				}, nil
+			}
+		}
+	}
+
+	return nil, errors.ErrMediaNotFound
 }
 
 // Close 实现 DataSource 接口的 Close 方法

@@ -2,6 +2,7 @@ package model
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"time"
 
@@ -31,6 +32,7 @@ import (
 // )
 type MessageV4 struct {
 	SortSeq        int64  `json:"sort_seq"`         // 消息序号，10位时间戳 + 3位序号
+	ServerID       int64  `json:"server_id"`        // 消息 ID，用于关联 voice
 	LocalType      int64  `json:"local_type"`       // 消息类型
 	UserName       string `json:"user_name"`        // 发送人，通过 Join Name2Id 表获得
 	CreateTime     int64  `json:"create_time"`      // 消息创建时间，10位时间戳
@@ -73,6 +75,11 @@ func (m *MessageV4) Wrap(talker string) *Message {
 	}
 
 	_m.ParseMediaInfo(content)
+
+	// 语音消息
+	if _m.Type == 34 {
+		_m.Contents["voice"] = fmt.Sprint(m.ServerID)
+	}
 
 	if len(m.PackedInfoData) != 0 {
 		if packedInfo := ParsePackedInfo(m.PackedInfoData); packedInfo != nil {

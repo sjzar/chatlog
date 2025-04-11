@@ -55,6 +55,8 @@ func (m *Message) ParseMediaInfo(data string) error {
 		if Debug {
 			m.SysMsg = &sysMsg
 		}
+		m.Sender = "系统消息"
+		m.SenderName = ""
 		m.Content = sysMsg.String()
 		return nil
 	}
@@ -188,13 +190,8 @@ func (m *Message) PlainText(showChatRoom bool, host string) string {
 	buf := strings.Builder{}
 
 	sender := m.Sender
-	switch {
-	case m.Type == 10000:
-		sender = "系统消息"
-	case m.IsSelf:
+	if m.IsSelf {
 		sender = "我"
-	default:
-		sender = m.Sender
 	}
 	if m.SenderName != "" {
 		buf.WriteString(m.SenderName)
@@ -235,6 +232,9 @@ func (m *Message) PlainTextContent() string {
 	case 3:
 		return fmt.Sprintf("![图片](http://%s/image/%s)", m.Contents["host"], m.Contents["md5"])
 	case 34:
+		if voice, ok := m.Contents["voice"]; ok {
+			return fmt.Sprintf("[语音](http://%s/voice/%s)", m.Contents["host"], voice)
+		}
 		return "[语音]"
 	case 42:
 		return "[名片]"

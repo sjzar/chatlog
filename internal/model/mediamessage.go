@@ -283,9 +283,34 @@ type FinderMegaVideo struct {
 }
 
 type SysMsg struct {
-	SysMsgTemplate SysMsgTemplate `xml:"sysmsgtemplate"`
+	Type              string             `xml:"type,attr"`
+	DelChatRoomMember *DelChatRoomMember `xml:"delchatroommember,omitempty"`
+	SysMsgTemplate    *SysMsgTemplate    `xml:"sysmsgtemplate,omitempty"`
 }
 
+// 第一种消息类型：删除群成员/二维码邀请
+type DelChatRoomMember struct {
+	Plain string `xml:"plain"`
+	Text  string `xml:"text"`
+	Link  QRLink `xml:"link"`
+}
+
+type QRLink struct {
+	Scene      string       `xml:"scene"`
+	Text       string       `xml:"text"`
+	MemberList QRMemberList `xml:"memberlist"`
+	QRCode     string       `xml:"qrcode"`
+}
+
+type QRMemberList struct {
+	Usernames []UsernameItem `xml:"username"`
+}
+
+type UsernameItem struct {
+	Value string `xml:",chardata"`
+}
+
+// 第二种消息类型：系统消息模板
 type SysMsgTemplate struct {
 	ContentTemplate ContentTemplate `xml:"content_template"`
 }
@@ -305,7 +330,8 @@ type Link struct {
 	Name       string     `xml:"name,attr"`
 	Type       string     `xml:"type,attr"`
 	MemberList MemberList `xml:"memberlist"`
-	Separator  string     `xml:"separator"`
+	Separator  string     `xml:"separator,omitempty"`
+	Title      string     `xml:"title,omitempty"`
 }
 
 type MemberList struct {
@@ -318,6 +344,24 @@ type Member struct {
 }
 
 func (s *SysMsg) String() string {
+	if s.Type == "delchatroommember" {
+		return s.DelChatRoomMemberString()
+	}
+	return s.SysMsgTemplateString()
+}
+
+func (s *SysMsg) DelChatRoomMemberString() string {
+	if s.DelChatRoomMember == nil {
+		return ""
+	}
+	return s.DelChatRoomMember.Plain
+}
+
+func (s *SysMsg) SysMsgTemplateString() string {
+	if s.SysMsgTemplate == nil {
+		return ""
+	}
+
 	template := s.SysMsgTemplate.ContentTemplate.Template
 	links := s.SysMsgTemplate.ContentTemplate.LinkList.Links
 
@@ -354,7 +398,11 @@ func (s *SysMsg) String() string {
 
 		// 可以根据需要添加其他链接类型的处理逻辑
 		default:
-			replacement = ""
+			if link.Title != "" {
+				replacement = link.Title
+			} else {
+				replacement = ""
+			}
 		}
 
 		// 将占位符名称和替换内容存入映射

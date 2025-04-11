@@ -47,33 +47,6 @@ type ContactV3 struct {
 	Remark    string `json:"Remark"`
 	NickName  string `json:"NickName"`
 	Reserved1 int    `json:"Reserved1"` // 1 自己好友或自己加入的群聊; 0 群聊成员(非好友)
-
-	// EncryptUserName string `json:"EncryptUserName"`
-	// DelFlag         int    `json:"DelFlag"`
-	// Type            int    `json:"Type"`
-	// VerifyFlag      int    `json:"VerifyFlag"`
-	// Reserved2       int    `json:"Reserved2"`
-	// Reserved3       string `json:"Reserved3"`
-	// Reserved4       string `json:"Reserved4"`
-	// LabelIDList     string `json:"LabelIDList"`
-	// DomainList      string `json:"DomainList"`
-	// ChatRoomType    int    `json:"ChatRoomType"`
-	// PYInitial       string `json:"PYInitial"`
-	// QuanPin         string `json:"QuanPin"`
-	// RemarkPYInitial string `json:"RemarkPYInitial"`
-	// RemarkQuanPin   string `json:"RemarkQuanPin"`
-	// BigHeadImgUrl   string `json:"BigHeadImgUrl"`
-	// SmallHeadImgUrl string `json:"SmallHeadImgUrl"`
-	// HeadImgMd5      string `json:"HeadImgMd5"`
-	// ChatRoomNotify  int    `json:"ChatRoomNotify"`
-	// Reserved5       int    `json:"Reserved5"`
-	// Reserved6       string `json:"Reserved6"`
-	// Reserved7       string `json:"Reserved7"`
-	// ExtraBuf        []byte `json:"ExtraBuf"`
-	// Reserved8       int    `json:"Reserved8"`
-	// Reserved9       int    `json:"Reserved9"`
-	// Reserved10      string `json:"Reserved10"`
-	// Reserved11      string `json:"Reserved11"`
 }
 
 func (c *ContactV3) Wrap() *Contact {

@@ -12,6 +12,7 @@ import (
 	"github.com/sjzar/chatlog/internal/errors"
 	"github.com/sjzar/chatlog/pkg/util"
 	"github.com/sjzar/chatlog/pkg/util/dat2img"
+	"github.com/sjzar/chatlog/pkg/util/silk"
 
 	"github.com/gin-gonic/gin"
 )
@@ -34,6 +35,7 @@ func (s *Service) initRouter() {
 	router.GET("/image/:key", s.GetImage)
 	router.GET("/video/:key", s.GetVideo)
 	router.GET("/file/:key", s.GetFile)
+	router.GET("/voice/:key", s.GetVoice)
 	router.GET("/data/*path", s.GetMediaData)
 
 	// MCP Server
@@ -272,6 +274,9 @@ func (s *Service) GetVideo(c *gin.Context) {
 func (s *Service) GetFile(c *gin.Context) {
 	s.GetMedia(c, "file")
 }
+func (s *Service) GetVoice(c *gin.Context) {
+	s.GetMedia(c, "voice")
+}
 
 func (s *Service) GetMedia(c *gin.Context, _type string) {
 	key := c.Param("key")
@@ -291,7 +296,13 @@ func (s *Service) GetMedia(c *gin.Context, _type string) {
 		return
 	}
 
-	c.Redirect(http.StatusFound, "/data/"+media.Path)
+	switch media.Type {
+	case "voice":
+		s.HandleVoice(c, media.Data)
+	default:
+		c.Redirect(http.StatusFound, "/data/"+media.Path)
+	}
+
 }
 
 func (s *Service) GetMediaData(c *gin.Context) {
@@ -342,4 +353,13 @@ func (s *Service) HandleDatFile(c *gin.Context, path string) {
 	default:
 		c.File(path)
 	}
+}
+
+func (s *Service) HandleVoice(c *gin.Context, data []byte) {
+	out, err := silk.Silk2MP3(data)
+	if err != nil {
+		c.Data(http.StatusOK, "audio/silk", data)
+		return
+	}
+	c.Data(http.StatusOK, "audio/mp3", out)
 }

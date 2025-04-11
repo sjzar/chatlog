@@ -112,7 +112,7 @@ func RootCause(err error) error {
 
 func Err(c *gin.Context, err error) {
 	if appErr, ok := err.(*Error); ok {
-		c.JSON(appErr.Code, appErr)
+		c.JSON(appErr.Code, appErr.Error())
 		return
 	}
 
