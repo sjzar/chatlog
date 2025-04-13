@@ -1,0 +1,17 @@
+#root {
+  height: 100%;
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+#root > div, #root > div > div {
+  height: 100%;
+  width: 100%;
+}
+
+main {
+  height: calc(100% - 56px - 32px);
+  width: calc(100% - 32px);
+  padding: 16px;
+  margin: 0;
+}
