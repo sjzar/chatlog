@@ -6,12 +6,14 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/rs/zerolog/log"
 	"github.com/sjzar/chatlog/internal/chatlog/conf"
 	"github.com/sjzar/chatlog/internal/chatlog/ctx"
 	"github.com/sjzar/chatlog/internal/chatlog/database"
 	"github.com/sjzar/chatlog/internal/chatlog/http"
 	"github.com/sjzar/chatlog/internal/chatlog/mcp"
 	"github.com/sjzar/chatlog/internal/chatlog/wechat"
+	iwechat "github.com/sjzar/chatlog/internal/wechat"
 	"github.com/sjzar/chatlog/pkg/util"
 	"github.com/sjzar/chatlog/pkg/util/dat2img"
 )
@@ -79,6 +81,33 @@ func (m *Manager) Run() error {
 	return nil
 }
 
+func (m *Manager) Switch(info *iwechat.Account, history string) error {
+	if m.ctx.AutoDecrypt {
+		if err := m.StopAutoDecrypt(); err != nil {
+			return err
+		}
+	}
+	if m.ctx.HTTPEnabled {
+		if err := m.stopService(); err != nil {
+			return err
+		}
+	}
+	if info != nil {
+		m.ctx.SwitchCurrent(info)
+	} else {
+		m.ctx.SwitchHistory(history)
+	}
+
+	if m.ctx.HTTPEnabled {
+		// 启动HTTP服务
+		if err := m.StartService(); err != nil {
+			log.Info().Err(err).Msg("启动服务失败")
+			m.StopService()
+		}
+	}
+	return nil
+}
+
 func (m *Manager) StartService() error {
 
 	// 按依赖顺序启动服务
@@ -109,6 +138,17 @@ func (m *Manager) StartService() error {
 }
 
 func (m *Manager) StopService() error {
+	if err := m.stopService(); err != nil {
+		return err
+	}
+
+	// 更新状态
+	m.ctx.SetHTTPEnabled(false)
+
+	return nil
+}
+
+func (m *Manager) stopService() error {
 	// 按依赖的反序停止服务
 	var errs []error
 
@@ -124,9 +164,6 @@ func (m *Manager) StopService() error {
 		errs = append(errs, err)
 	}
 
-	// 更新状态
-	m.ctx.SetHTTPEnabled(false)
-
 	// 如果有错误，返回第一个错误
 	if len(errs) > 0 {
 		return errs[0]
@@ -138,7 +175,7 @@ func (m *Manager) StopService() error {
 func (m *Manager) SetHTTPAddr(text string) error {
 	var addr string
 	if util.IsNumeric(text) {
-		addr = fmt.Sprintf("0.0.0.0:%s", text)
+		addr = fmt.Sprintf("127.0.0.1:%s", text)
 	} else if strings.HasPrefix(text, "http://") {
 		addr = strings.TrimPrefix(text, "http://")
 	} else if strings.HasPrefix(text, "https://") {
@@ -175,11 +212,53 @@ func (m *Manager) DecryptDBFiles() error {
 		m.ctx.WorkDir = util.DefaultWorkDir(m.ctx.Account)
 	}
 
-	if err := m.wechat.DecryptDBFiles(m.ctx.DataDir, m.ctx.WorkDir, m.ctx.DataKey, m.ctx.Platform, m.ctx.Version); err != nil {
+	if err := m.wechat.DecryptDBFiles(); err != nil {
 		return err
 	}
 	m.ctx.Refresh()
 	m.ctx.UpdateConfig()
+	return nil
+}
+
+func (m *Manager) StartAutoDecrypt() error {
+	if m.ctx.DataKey == "" || m.ctx.DataDir == "" {
+		return fmt.Errorf("请先获取密钥")
+	}
+	if m.ctx.WorkDir == "" {
+		return fmt.Errorf("请先执行解密数据")
+	}
+
+	if err := m.wechat.StartAutoDecrypt(); err != nil {
+		return err
+	}
+
+	m.ctx.SetAutoDecrypt(true)
+	return nil
+}
+
+func (m *Manager) StopAutoDecrypt() error {
+	if err := m.wechat.StopAutoDecrypt(); err != nil {
+		return err
+	}
+
+	m.ctx.SetAutoDecrypt(false)
+	return nil
+}
+
+func (m *Manager) RefreshSession() error {
+	if m.db.GetDB() == nil {
+		if err := m.db.Start(); err != nil {
+			return err
+		}
+	}
+	resp, err := m.db.GetSessions("", 1, 0)
+	if err != nil {
+		return err
+	}
+	if len(resp.Items) == 0 {
+		return nil
+	}
+	m.ctx.LastSession = resp.Items[0].NTime
 	return nil
 }
 
@@ -216,8 +295,12 @@ func (m *Manager) CommandDecrypt(dataDir string, workDir string, key string, pla
 	if workDir == "" {
 		workDir = util.DefaultWorkDir(filepath.Base(filepath.Dir(dataDir)))
 	}
-
-	if err := m.wechat.DecryptDBFiles(dataDir, workDir, key, platform, version); err != nil {
+	m.ctx.DataDir = dataDir
+	m.ctx.WorkDir = workDir
+	m.ctx.DataKey = key
+	m.ctx.Platform = platform
+	m.ctx.Version = version
+	if err := m.wechat.DecryptDBFiles(); err != nil {
 		return err
 	}
 

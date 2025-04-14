@@ -3,6 +3,9 @@ package repository
 import (
 	"context"
 
+	"github.com/fsnotify/fsnotify"
+	"github.com/rs/zerolog/log"
+
 	"github.com/sjzar/chatlog/internal/errors"
 	"github.com/sjzar/chatlog/internal/model"
 	"github.com/sjzar/chatlog/internal/wechatdb/datasource"
@@ -61,6 +64,9 @@ func New(ds datasource.DataSource) (*Repository, error) {
 		return nil, errors.InitCacheFailed(err)
 	}
 
+	ds.SetCallback("contact", r.contactCallback)
+	ds.SetCallback("chatroom", r.chatroomCallback)
+
 	return r, nil
 }
 
@@ -76,6 +82,26 @@ func (r *Repository) initCache(ctx context.Context) error {
 		return err
 	}
 
+	return nil
+}
+
+func (r *Repository) contactCallback(event fsnotify.Event) error {
+	if !event.Op.Has(fsnotify.Create) {
+		return nil
+	}
+	if err := r.initContactCache(context.Background()); err != nil {
+		log.Err(err).Msgf("Failed to reinitialize contact cache: %s", event.Name)
+	}
+	return nil
+}
+
+func (r *Repository) chatroomCallback(event fsnotify.Event) error {
+	if !event.Op.Has(fsnotify.Create) {
+		return nil
+	}
+	if err := r.initChatRoomCache(context.Background()); err != nil {
+		log.Err(err).Msgf("Failed to reinitialize contact cache: %s", event.Name)
+	}
 	return nil
 }
 

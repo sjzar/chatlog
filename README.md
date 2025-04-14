@@ -58,7 +58,7 @@ go install github.com/sjzar/chatlog@latest
 
 ### macOS 版本提示
 
-1. macOS 用户在获取密钥前，需要确认已经关闭 SIP 并安装 Xcode。由于 macOS 的安全机制，在正常情况在无法读取微信进程的内存数据，所以需要临时关闭 SIP。关闭 SIP 的方法：
+1. macOS 用户在获取密钥前，需要确认已经关闭 SIP 并安装 Xcode Command Line Tools。由于 macOS 的安全机制，在正常情况在无法读取微信进程的内存数据，所以需要临时关闭 SIP。关闭 SIP 的方法：
 
 ```shell
 # 1. 进入恢复模式
@@ -72,9 +72,16 @@ go install github.com/sjzar/chatlog@latest
 # 4. 重启系统
 ```
 
-2. 目前的 macOS 版本方案依赖 `lldb` 工具，所以需要安装 Xcode，可以从 App Store 进行下载。
+2. 目前的 macOS 版本方案依赖 `lldb` 工具，所以需要安装 Xcode Command Line Tools。
+
+```shell
+# 在 terminal 执行以下命令安装 Xcode Command Line Tools：
+xcode-select --install
+```
 
 3. 仅获取数据密钥步骤需要关闭 SIP；获取数据密钥后即可重新打开 SIP，不影响解密数据和 HTTP 服务的运行。
+
+4. 如果是 Apple Silicon 芯片的 mac 用户，请检查 微信、chatlog、terminal 均不要运行在 Rosetta 模式下运行，否则可能无法获取密钥。
 
 ### Terminal UI 模式
 

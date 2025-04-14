@@ -60,3 +60,7 @@ func ContactNotFound(key string) *Error {
 func InitCacheFailed(cause error) *Error {
 	return New(cause, http.StatusInternalServerError, "init cache failed").WithStack()
 }
+
+func FileGroupNotFound(name string) *Error {
+	return Newf(nil, http.StatusNotFound, "file group not found: %s", name).WithStack()
+}

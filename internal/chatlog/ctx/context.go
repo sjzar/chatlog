@@ -2,6 +2,7 @@ package ctx
 
 import (
 	"sync"
+	"time"
 
 	"github.com/sjzar/chatlog/internal/chatlog/conf"
 	"github.com/sjzar/chatlog/internal/wechat"
@@ -33,6 +34,10 @@ type Context struct {
 	HTTPEnabled bool
 	HTTPAddr    string
 
+	// 自动解密
+	AutoDecrypt bool
+	LastSession time.Time
+
 	// 当前选中的微信实例
 	Current *wechat.Account
 	PID     int
@@ -63,6 +68,10 @@ func (c *Context) loadConfig() {
 func (c *Context) SwitchHistory(account string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.Current = nil
+	c.PID = 0
+	c.ExePath = ""
+	c.Status = ""
 	history, ok := c.History[account]
 	if ok {
 		c.Account = history.Account
@@ -151,6 +160,13 @@ func (c *Context) SetDataDir(dir string) {
 	c.DataDir = dir
 	c.UpdateConfig()
 	c.Refresh()
+}
+
+func (c *Context) SetAutoDecrypt(enabled bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.AutoDecrypt = enabled
+	c.UpdateConfig()
 }
 
 // 更新配置
