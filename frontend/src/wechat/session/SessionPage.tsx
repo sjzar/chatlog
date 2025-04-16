@@ -13,6 +13,7 @@ import {
   useId,
   Option,
   Dropdown,
+  Link,
 } from "@fluentui/react-components";
 import type {
   SelectionEvents,
@@ -22,6 +23,7 @@ import { useRequest } from '@/hooks/useRequest';
 import { getChatSessions } from '../WeChatService';
 import { ChatSessionData, ChatSessionItem, GetDataParams } from '../typing';
 import toast, { Toaster } from 'react-hot-toast';
+import { ChatlogDrawer } from './components/ChatlogDrawer';
 
 const columns = [
   { columnKey: "userName", label: "UserName" },
@@ -63,6 +65,8 @@ export function SessionPage() {
       '200',
       '500',
     ];
+    const [isOpen, setIsOpen] = React.useState(false);
+    const [currentChatSessionItem, setCurrentChatSessionItem] = React.useState<ChatSessionItem>();
   
     React.useEffect(() => {
       loadData();
@@ -127,6 +131,14 @@ export function SessionPage() {
                     {item.content}
                   </TableCellLayout>
                 </TableCell>
+                <TableCell>
+                  <TableCellLayout>
+                    <Link onClick={() => {
+                      setCurrentChatSessionItem(item);
+                      setIsOpen(true);
+                    }}>View Details</Link>
+                  </TableCellLayout>
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -147,6 +159,12 @@ export function SessionPage() {
             ))}
           </Dropdown>
         </div>
+
+        <ChatlogDrawer
+          isOpen={isOpen}
+          setIsOpen={setIsOpen}
+          currentChatSessionItem={currentChatSessionItem!}
+        />
       </div>
     );
 }

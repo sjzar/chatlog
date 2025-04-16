@@ -1,5 +1,5 @@
 import { http } from "@/utils/Http";
-import { ChatRoomData, ChatSessionData, ContactData, GetDataParams } from "./typing";
+import { ChatlogItem, ChatRoomData, ChatSessionData, ContactData, GetDataParams } from "./typing";
 
 export async function getContact(params: GetDataParams): Promise<ContactData> {
   try {
@@ -27,6 +27,16 @@ export async function getChatSessions(params: GetDataParams): Promise<ChatSessio
     return response.data;
   } catch (error) {
     console.error('Error fetching chat sessions:', error);
+    throw error;
+  }
+}
+
+export async function getChatlog(params: GetDataParams): Promise<ChatlogItem[]> {
+  try {
+    const response = await http.get<ChatlogItem[]>('/api/v1/chatlog?format=json', { params });
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching chat logs:', error);
     throw error;
   }
 }

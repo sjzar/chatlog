@@ -1,6 +1,8 @@
 export interface GetDataParams {
   limit: number;
   offset: number;
+  talker?: string;
+  time?: string;
 }
 
 export interface ContactData {
@@ -42,4 +44,18 @@ export interface ChatSessionItem {
   nOrder: string;
   content: string;
   nTime: string;
+}
+
+export interface ChatlogItem {
+  seq: number;
+  time: string;
+  talker: string;
+  talkerName: string;
+  isChatRoom: boolean;
+  sender: string;
+  senderName: string;
+  isSelf: boolean;
+  type: number;
+  subType: number;
+  content: string;
 }
