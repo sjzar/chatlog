@@ -5,24 +5,38 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
+	"sync"
+	"time"
+
+	"github.com/fsnotify/fsnotify"
+	"github.com/rs/zerolog/log"
 
 	"github.com/sjzar/chatlog/internal/chatlog/ctx"
 	"github.com/sjzar/chatlog/internal/errors"
 	"github.com/sjzar/chatlog/internal/wechat"
 	"github.com/sjzar/chatlog/internal/wechat/decrypt"
+	"github.com/sjzar/chatlog/pkg/filemonitor"
 	"github.com/sjzar/chatlog/pkg/util"
+)
 
-	"github.com/rs/zerolog/log"
+var (
+	DebounceTime = 1 * time.Second
+	MaxWaitTime  = 10 * time.Second
 )
 
 type Service struct {
-	ctx *ctx.Context
+	ctx            *ctx.Context
+	lastEvents     map[string]time.Time
+	pendingActions map[string]bool
+	mutex          sync.Mutex
+	fm             *filemonitor.FileMonitor
 }
 
 func NewService(ctx *ctx.Context) *Service {
 	return &Service{
-		ctx: ctx,
+		ctx:            ctx,
+		lastEvents:     make(map[string]time.Time),
+		pendingActions: make(map[string]bool),
 	}
 }
 
@@ -46,90 +60,128 @@ func (s *Service) GetDataKey(info *wechat.Account) (string, error) {
 	return key, nil
 }
 
-// FindDBFiles finds all .db files in the specified directory
-func (s *Service) FindDBFiles(rootDir string, recursive bool) ([]string, error) {
-	// Check if directory exists
-	info, err := os.Stat(rootDir)
+func (s *Service) StartAutoDecrypt() error {
+	dbGroup, err := filemonitor.NewFileGroup("wechat", s.ctx.DataDir, `.*\.db$`, []string{"fts"})
 	if err != nil {
-		return nil, fmt.Errorf("cannot access directory %s: %w", rootDir, err)
+		return err
 	}
+	dbGroup.AddCallback(s.DecryptFileCallback)
 
-	if !info.IsDir() {
-		return nil, fmt.Errorf("%s is not a directory", rootDir)
+	s.fm = filemonitor.NewFileMonitor()
+	s.fm.AddGroup(dbGroup)
+	if err := s.fm.Start(); err != nil {
+		log.Debug().Err(err).Msg("failed to start file monitor")
+		return err
 	}
+	return nil
+}
 
-	var dbFiles []string
-
-	// Define walk function
-	walkFunc := func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			// If a file or directory can't be accessed, log the error but continue
-			log.Err(err).Msgf("Warning: Cannot access %s", path)
-			return nil
+func (s *Service) StopAutoDecrypt() error {
+	if s.fm != nil {
+		if err := s.fm.Stop(); err != nil {
+			return err
 		}
+	}
+	s.fm = nil
+	return nil
+}
 
-		// If it's a directory and not the root directory, and we're not recursively searching, skip it
-		if info.IsDir() && path != rootDir && !recursive {
-			return filepath.SkipDir
-		}
-
-		// Check if file extension is .db
-		if !info.IsDir() && strings.ToLower(filepath.Ext(path)) == ".db" {
-			dbFiles = append(dbFiles, path)
-		}
-
+func (s *Service) DecryptFileCallback(event fsnotify.Event) error {
+	if event.Op.Has(fsnotify.Chmod) || !event.Op.Has(fsnotify.Write) {
 		return nil
 	}
 
-	// Start traversal
-	err = filepath.Walk(rootDir, walkFunc)
-	if err != nil {
-		return nil, fmt.Errorf("error traversing directory: %w", err)
+	s.mutex.Lock()
+	s.lastEvents[event.Name] = time.Now()
+
+	if !s.pendingActions[event.Name] {
+		s.pendingActions[event.Name] = true
+		s.mutex.Unlock()
+		go s.waitAndProcess(event.Name)
+	} else {
+		s.mutex.Unlock()
 	}
 
-	if len(dbFiles) == 0 {
-		return nil, fmt.Errorf("no .db files found")
-	}
-
-	return dbFiles, nil
+	return nil
 }
 
-func (s *Service) DecryptDBFiles(dataDir string, workDir string, key string, platform string, version int) error {
+func (s *Service) waitAndProcess(dbFile string) {
+	start := time.Now()
+	for {
+		time.Sleep(DebounceTime)
 
-	ctx := context.Background()
+		s.mutex.Lock()
+		lastEventTime := s.lastEvents[dbFile]
+		elapsed := time.Since(lastEventTime)
+		totalElapsed := time.Since(start)
 
-	dbfiles, err := s.FindDBFiles(dataDir, true)
+		if elapsed >= DebounceTime || totalElapsed >= MaxWaitTime {
+			s.pendingActions[dbFile] = false
+			s.mutex.Unlock()
+
+			log.Debug().Msgf("Processing file: %s", dbFile)
+			s.DecryptDBFile(dbFile)
+			return
+		}
+		s.mutex.Unlock()
+	}
+}
+
+func (s *Service) DecryptDBFile(dbFile string) error {
+
+	decryptor, err := decrypt.NewDecryptor(s.ctx.Platform, s.ctx.Version)
 	if err != nil {
 		return err
 	}
 
-	decryptor, err := decrypt.NewDecryptor(platform, version)
-	if err != nil {
+	output := filepath.Join(s.ctx.WorkDir, dbFile[len(s.ctx.DataDir):])
+	if err := util.PrepareDir(filepath.Dir(output)); err != nil {
 		return err
 	}
 
-	for _, dbfile := range dbfiles {
-		output := filepath.Join(workDir, dbfile[len(dataDir):])
-		if err := util.PrepareDir(filepath.Dir(output)); err != nil {
-			return err
+	outputTemp := output + ".tmp"
+	outputFile, err := os.Create(outputTemp)
+	if err != nil {
+		return fmt.Errorf("failed to create output file: %v", err)
+	}
+	defer func() {
+		outputFile.Close()
+		if err := os.Rename(outputTemp, output); err != nil {
+			log.Debug().Err(err).Msgf("failed to rename %s to %s", outputTemp, output)
 		}
+	}()
 
-		outputFile, err := os.Create(output)
-		if err != nil {
-			return fmt.Errorf("failed to create output file: %v", err)
-		}
-		defer outputFile.Close()
-
-		if err := decryptor.Decrypt(ctx, dbfile, key, outputFile); err != nil {
-			log.Err(err).Msgf("failed to decrypt %s", dbfile)
-			if err == errors.ErrAlreadyDecrypted {
-				if data, err := os.ReadFile(dbfile); err == nil {
-					outputFile.Write(data)
-				}
-				continue
+	if err := decryptor.Decrypt(context.Background(), dbFile, s.ctx.DataKey, outputFile); err != nil {
+		if err == errors.ErrAlreadyDecrypted {
+			if data, err := os.ReadFile(dbFile); err == nil {
+				outputFile.Write(data)
 			}
+			return nil
+		}
+		log.Err(err).Msgf("failed to decrypt %s", dbFile)
+		return err
+	}
+
+	log.Debug().Msgf("Decrypted %s to %s", dbFile, output)
+
+	return nil
+}
+
+func (s *Service) DecryptDBFiles() error {
+	dbGroup, err := filemonitor.NewFileGroup("wechat", s.ctx.DataDir, `.*\.db$`, []string{"fts"})
+	if err != nil {
+		return err
+	}
+
+	dbFiles, err := dbGroup.List()
+	if err != nil {
+		return err
+	}
+
+	for _, dbFile := range dbFiles {
+		if err := s.DecryptDBFile(dbFile); err != nil {
+			log.Debug().Msgf("DecryptDBFile %s failed: %v", dbFile, err)
 			continue
-			// return err
 		}
 	}
 

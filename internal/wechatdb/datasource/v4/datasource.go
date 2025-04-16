@@ -10,21 +10,50 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/rs/zerolog/log"
 
 	"github.com/sjzar/chatlog/internal/errors"
 	"github.com/sjzar/chatlog/internal/model"
-	"github.com/sjzar/chatlog/pkg/util"
+	"github.com/sjzar/chatlog/internal/wechatdb/datasource/dbm"
 )
 
 const (
-	MessageFilePattern = "^message_([0-9]?[0-9])?\\.db$"
-	ContactFilePattern = "^contact\\.db$"
-	SessionFilePattern = "^session\\.db$"
-	MediaFilePattern   = "^hardlink\\.db$"
-	VoiceFilePattern   = "^media_([0-9]?[0-9])?\\.db$"
+	Message = "message"
+	Contact = "contact"
+	Session = "session"
+	Media   = "media"
+	Voice   = "voice"
 )
+
+var Groups = []dbm.Group{
+	{
+		Name:      Message,
+		Pattern:   `^message_([0-9]?[0-9])?\.db$`,
+		BlackList: []string{},
+	},
+	{
+		Name:      Contact,
+		Pattern:   `^contact\.db$`,
+		BlackList: []string{},
+	},
+	{
+		Name:      Session,
+		Pattern:   `session\.db$`,
+		BlackList: []string{},
+	},
+	{
+		Name:      Media,
+		Pattern:   `^hardlink\.db$`,
+		BlackList: []string{},
+	},
+	{
+		Name:      Voice,
+		Pattern:   `^media_([0-9]?[0-9])?\.db$`,
+		BlackList: []string{},
+	},
+}
 
 // MessageDBInfo 存储消息数据库的信息
 type MessageDBInfo struct {
@@ -34,61 +63,65 @@ type MessageDBInfo struct {
 }
 
 type DataSource struct {
-	path       string
-	messageDbs map[string]*sql.DB
-	contactDb  *sql.DB
-	sessionDb  *sql.DB
-	mediaDb    *sql.DB
-	voiceDb    []*sql.DB
+	path string
+	dbm  *dbm.DBManager
 
 	// 消息数据库信息
-	messageFiles []MessageDBInfo
+	messageInfos []MessageDBInfo
 }
 
 func New(path string) (*DataSource, error) {
+
 	ds := &DataSource{
 		path:         path,
-		messageDbs:   make(map[string]*sql.DB),
-		voiceDb:      make([]*sql.DB, 0),
-		messageFiles: make([]MessageDBInfo, 0),
+		dbm:          dbm.NewDBManager(path),
+		messageInfos: make([]MessageDBInfo, 0),
 	}
 
-	if err := ds.initMessageDbs(path); err != nil {
+	for _, g := range Groups {
+		ds.dbm.AddGroup(g)
+	}
+
+	if err := ds.dbm.Start(); err != nil {
+		return nil, err
+	}
+
+	if err := ds.initMessageDbs(); err != nil {
 		return nil, errors.DBInitFailed(err)
 	}
-	if err := ds.initContactDb(path); err != nil {
-		return nil, errors.DBInitFailed(err)
-	}
-	if err := ds.initSessionDb(path); err != nil {
-		return nil, errors.DBInitFailed(err)
-	}
-	if err := ds.initMediaDb(path); err != nil {
-		return nil, errors.DBInitFailed(err)
-	}
-	if err := ds.initVoiceDb(path); err != nil {
-		return nil, errors.DBInitFailed(err)
-	}
+
+	ds.dbm.AddCallback(Message, func(event fsnotify.Event) error {
+		if !event.Op.Has(fsnotify.Create) {
+			return nil
+		}
+		if err := ds.initMessageDbs(); err != nil {
+			log.Err(err).Msgf("Failed to reinitialize message DBs: %s", event.Name)
+		}
+		return nil
+	})
 
 	return ds, nil
 }
 
-func (ds *DataSource) initMessageDbs(path string) error {
-	// 查找所有消息数据库文件
-	files, err := util.FindFilesWithPatterns(path, MessageFilePattern, true)
-	if err != nil {
-		return errors.DBFileNotFound(path, MessageFilePattern, err)
+func (ds *DataSource) SetCallback(name string, callback func(event fsnotify.Event) error) error {
+	if name == "chatroom" {
+		name = Contact
 	}
+	return ds.dbm.AddCallback(name, callback)
+}
 
-	if len(files) == 0 {
-		return errors.DBFileNotFound(path, MessageFilePattern, nil)
+func (ds *DataSource) initMessageDbs() error {
+	dbPaths, err := ds.dbm.GetDBPath(Message)
+	if err != nil {
+		return err
 	}
 
 	// 处理每个数据库文件
-	for _, filePath := range files {
-		// 连接数据库
-		db, err := sql.Open("sqlite3", filePath)
+	infos := make([]MessageDBInfo, 0)
+	for _, filePath := range dbPaths {
+		db, err := ds.dbm.OpenDB(filePath)
 		if err != nil {
-			log.Err(err).Msgf("连接数据库 %s 失败", filePath)
+			log.Err(err).Msgf("获取数据库 %s 失败", filePath)
 			continue
 		}
 
@@ -99,108 +132,38 @@ func (ds *DataSource) initMessageDbs(path string) error {
 		row := db.QueryRow("SELECT timestamp FROM Timestamp LIMIT 1")
 		if err := row.Scan(&timestamp); err != nil {
 			log.Err(err).Msgf("获取数据库 %s 的时间戳失败", filePath)
-			db.Close()
 			continue
 		}
 		startTime = time.Unix(timestamp, 0)
 
 		// 保存数据库信息
-		ds.messageFiles = append(ds.messageFiles, MessageDBInfo{
+		infos = append(infos, MessageDBInfo{
 			FilePath:  filePath,
 			StartTime: startTime,
 		})
-
-		// 保存数据库连接
-		ds.messageDbs[filePath] = db
 	}
 
 	// 按照 StartTime 排序数据库文件
-	sort.Slice(ds.messageFiles, func(i, j int) bool {
-		return ds.messageFiles[i].StartTime.Before(ds.messageFiles[j].StartTime)
+	sort.Slice(infos, func(i, j int) bool {
+		return infos[i].StartTime.Before(infos[j].StartTime)
 	})
 
 	// 设置结束时间
-	for i := range ds.messageFiles {
-		if i == len(ds.messageFiles)-1 {
-			ds.messageFiles[i].EndTime = time.Now()
+	for i := range infos {
+		if i == len(infos)-1 {
+			infos[i].EndTime = time.Now()
 		} else {
-			ds.messageFiles[i].EndTime = ds.messageFiles[i+1].StartTime
+			infos[i].EndTime = infos[i+1].StartTime
 		}
 	}
-
-	return nil
-}
-
-func (ds *DataSource) initContactDb(path string) error {
-	files, err := util.FindFilesWithPatterns(path, ContactFilePattern, true)
-	if err != nil {
-		return errors.DBFileNotFound(path, ContactFilePattern, err)
-	}
-
-	if len(files) == 0 {
-		return errors.DBFileNotFound(path, ContactFilePattern, nil)
-	}
-
-	ds.contactDb, err = sql.Open("sqlite3", files[0])
-	if err != nil {
-		return errors.DBConnectFailed(files[0], err)
-	}
-
-	return nil
-}
-
-func (ds *DataSource) initSessionDb(path string) error {
-	files, err := util.FindFilesWithPatterns(path, SessionFilePattern, true)
-	if err != nil {
-		return errors.DBFileNotFound(path, SessionFilePattern, err)
-	}
-	if len(files) == 0 {
-		return errors.DBFileNotFound(path, SessionFilePattern, nil)
-	}
-	ds.sessionDb, err = sql.Open("sqlite3", files[0])
-	if err != nil {
-		return errors.DBConnectFailed(files[0], err)
-	}
-	return nil
-}
-
-func (ds *DataSource) initMediaDb(path string) error {
-	files, err := util.FindFilesWithPatterns(path, MediaFilePattern, true)
-	if err != nil {
-		return errors.DBFileNotFound(path, MediaFilePattern, err)
-	}
-	if len(files) == 0 {
-		return errors.DBFileNotFound(path, MediaFilePattern, nil)
-	}
-	ds.mediaDb, err = sql.Open("sqlite3", files[0])
-	if err != nil {
-		return errors.DBConnectFailed(files[0], err)
-	}
-	return nil
-}
-
-func (ds *DataSource) initVoiceDb(path string) error {
-	files, err := util.FindFilesWithPatterns(path, VoiceFilePattern, true)
-	if err != nil {
-		return errors.DBFileNotFound(path, VoiceFilePattern, err)
-	}
-	if len(files) == 0 {
-		return errors.DBFileNotFound(path, VoiceFilePattern, nil)
-	}
-	for _, file := range files {
-		db, err := sql.Open("sqlite3", file)
-		if err != nil {
-			return errors.DBConnectFailed(files[0], err)
-		}
-		ds.voiceDb = append(ds.voiceDb, db)
-	}
+	ds.messageInfos = infos
 	return nil
 }
 
 // getDBInfosForTimeRange 获取时间范围内的数据库信息
 func (ds *DataSource) getDBInfosForTimeRange(startTime, endTime time.Time) []MessageDBInfo {
 	var dbs []MessageDBInfo
-	for _, info := range ds.messageFiles {
+	for _, info := range ds.messageInfos {
 		if info.StartTime.Before(endTime) && info.EndTime.After(startTime) {
 			dbs = append(dbs, info)
 		}
@@ -234,8 +197,8 @@ func (ds *DataSource) GetMessages(ctx context.Context, startTime, endTime time.T
 			return nil, err
 		}
 
-		db, ok := ds.messageDbs[dbInfo.FilePath]
-		if !ok {
+		db, err := ds.dbm.OpenDB(dbInfo.FilePath)
+		if err != nil {
 			log.Error().Msgf("数据库 %s 未打开", dbInfo.FilePath)
 			continue
 		}
@@ -275,8 +238,8 @@ func (ds *DataSource) GetMessages(ctx context.Context, startTime, endTime time.T
 
 // getMessagesSingleFile 从单个数据库文件获取消息
 func (ds *DataSource) getMessagesSingleFile(ctx context.Context, dbInfo MessageDBInfo, startTime, endTime time.Time, talker string, limit, offset int) ([]*model.Message, error) {
-	db, ok := ds.messageDbs[dbInfo.FilePath]
-	if !ok {
+	db, err := ds.dbm.OpenDB(dbInfo.FilePath)
+	if err != nil {
 		return nil, errors.DBConnectFailed(dbInfo.FilePath, nil)
 	}
 
@@ -287,7 +250,7 @@ func (ds *DataSource) getMessagesSingleFile(ctx context.Context, dbInfo MessageD
 
 	// 检查表是否存在
 	var exists bool
-	err := db.QueryRowContext(ctx,
+	err = db.QueryRowContext(ctx,
 		"SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
 		tableName).Scan(&exists)
 
@@ -445,7 +408,11 @@ func (ds *DataSource) GetContacts(ctx context.Context, key string, limit, offset
 	}
 
 	// 执行查询
-	rows, err := ds.contactDb.QueryContext(ctx, query, args...)
+	db, err := ds.dbm.GetDB(Contact)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, errors.QueryFailed(query, err)
 	}
@@ -477,13 +444,18 @@ func (ds *DataSource) GetChatRooms(ctx context.Context, key string, limit, offse
 	var query string
 	var args []interface{}
 
+	// 执行查询
+	db, err := ds.dbm.GetDB(Contact)
+	if err != nil {
+		return nil, err
+	}
+
 	if key != "" {
 		// 按照关键字查询
 		query = `SELECT username, owner, ext_buffer FROM chat_room WHERE username = ?`
 		args = []interface{}{key}
 
-		// 执行查询
-		rows, err := ds.contactDb.QueryContext(ctx, query, args...)
+		rows, err := db.QueryContext(ctx, query, args...)
 		if err != nil {
 			return nil, errors.QueryFailed(query, err)
 		}
@@ -510,7 +482,7 @@ func (ds *DataSource) GetChatRooms(ctx context.Context, key string, limit, offse
 			contacts, err := ds.GetContacts(ctx, key, 1, 0)
 			if err == nil && len(contacts) > 0 && strings.HasSuffix(contacts[0].UserName, "@chatroom") {
 				// 再次尝试通过用户名查找群聊
-				rows, err := ds.contactDb.QueryContext(ctx,
+				rows, err := db.QueryContext(ctx,
 					`SELECT username, owner, ext_buffer FROM chat_room WHERE username = ?`,
 					contacts[0].UserName)
 
@@ -560,7 +532,7 @@ func (ds *DataSource) GetChatRooms(ctx context.Context, key string, limit, offse
 		}
 
 		// 执行查询
-		rows, err := ds.contactDb.QueryContext(ctx, query, args...)
+		rows, err := db.QueryContext(ctx, query, args...)
 		if err != nil {
 			return nil, errors.QueryFailed(query, err)
 		}
@@ -614,7 +586,11 @@ func (ds *DataSource) GetSessions(ctx context.Context, key string, limit, offset
 	}
 
 	// 执行查询
-	rows, err := ds.sessionDb.QueryContext(ctx, query, args...)
+	db, err := ds.dbm.GetDB(Session)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, errors.QueryFailed(query, err)
 	}
@@ -678,7 +654,12 @@ func (ds *DataSource) GetMedia(ctx context.Context, _type string, key string) (*
 	query += " WHERE f.md5 = ? OR f.file_name LIKE ? || '%'"
 	args := []interface{}{key, key}
 
-	rows, err := ds.mediaDb.QueryContext(ctx, query, args...)
+	// 执行查询
+	db, err := ds.dbm.GetDB(Media)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, errors.QueryFailed(query, err)
 	}
@@ -726,7 +707,12 @@ func (ds *DataSource) GetVoice(ctx context.Context, key string) (*model.Media, e
 	`
 	args := []interface{}{key}
 
-	for _, db := range ds.voiceDb {
+	dbs, err := ds.dbm.GetDBs(Voice)
+	if err != nil {
+		return nil, errors.DBConnectFailed("", err)
+	}
+
+	for _, db := range dbs {
 		rows, err := db.QueryContext(ctx, query, args...)
 		if err != nil {
 			return nil, errors.QueryFailed(query, err)
@@ -755,38 +741,5 @@ func (ds *DataSource) GetVoice(ctx context.Context, key string) (*model.Media, e
 }
 
 func (ds *DataSource) Close() error {
-	var errs []error
-
-	// 关闭消息数据库连接
-	for _, db := range ds.messageDbs {
-		if err := db.Close(); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	// 关闭联系人数据库连接
-	if ds.contactDb != nil {
-		if err := ds.contactDb.Close(); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	// 关闭会话数据库连接
-	if ds.sessionDb != nil {
-		if err := ds.sessionDb.Close(); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	if ds.mediaDb != nil {
-		if err := ds.mediaDb.Close(); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	if len(errs) > 0 {
-		return errors.DBCloseFailed(errs[0])
-	}
-
-	return nil
+	return ds.dbm.Close()
 }

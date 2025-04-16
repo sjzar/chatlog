@@ -84,11 +84,12 @@ func (s *Service) Stop() error {
 	}
 
 	// 使用超时上下文优雅关闭
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	if err := s.server.Shutdown(ctx); err != nil {
-		return errors.HTTPShutDown(err)
+		log.Debug().Err(err).Msg("Failed to shutdown HTTP server")
+		return nil
 	}
 
 	log.Info().Msg("HTTP server stopped")

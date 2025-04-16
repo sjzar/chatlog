@@ -15,13 +15,14 @@ const (
 
 // InfoBarViewHeight info bar height.
 const (
-	InfoBarViewHeight = 6
+	InfoBarViewHeight = 7
 	accountRow        = 0
-	pidRow            = 1
-	statusRow         = 2
-	dataUsageRow      = 3
-	workUsageRow      = 4
-	httpServerRow     = 5
+	statusRow         = 1
+	platformRow       = 2
+	sessionRow        = 3
+	dataUsageRow      = 4
+	workUsageRow      = 5
+	httpServerRow     = 6
 
 	// 列索引
 	labelCol1 = 0 // 第一列标签
@@ -43,7 +44,7 @@ func New() *InfoBar {
 	table := tview.NewTable()
 	headerColor := style.InfoBarItemFgColor
 
-	// Account 和 Version 行
+	// Account 和 PID 行
 	table.SetCell(
 		accountRow,
 		labelCol1,
@@ -54,26 +55,11 @@ func New() *InfoBar {
 	table.SetCell(
 		accountRow,
 		labelCol2,
-		tview.NewTableCell(fmt.Sprintf(" [%s::]%s", headerColor, "Version:")),
+		tview.NewTableCell(fmt.Sprintf(" [%s::]%s", headerColor, "PID:")),
 	)
 	table.SetCell(accountRow, valueCol2, tview.NewTableCell(""))
 
-	// PID 和 ExePath 行
-	table.SetCell(
-		pidRow,
-		labelCol1,
-		tview.NewTableCell(fmt.Sprintf(" [%s::]%s", headerColor, "PID:")),
-	)
-	table.SetCell(pidRow, valueCol1, tview.NewTableCell(""))
-
-	table.SetCell(
-		pidRow,
-		labelCol2,
-		tview.NewTableCell(fmt.Sprintf(" [%s::]%s", headerColor, "ExePath:")),
-	)
-	table.SetCell(pidRow, valueCol2, tview.NewTableCell(""))
-
-	// Status 和 Key 行
+	// Status 和 ExePath 行
 	table.SetCell(
 		statusRow,
 		labelCol1,
@@ -84,9 +70,39 @@ func New() *InfoBar {
 	table.SetCell(
 		statusRow,
 		labelCol2,
-		tview.NewTableCell(fmt.Sprintf(" [%s::]%s", headerColor, "Data Key:")),
+		tview.NewTableCell(fmt.Sprintf(" [%s::]%s", headerColor, "ExePath:")),
 	)
 	table.SetCell(statusRow, valueCol2, tview.NewTableCell(""))
+
+	// Platform 和 Version 行
+	table.SetCell(
+		platformRow,
+		labelCol1,
+		tview.NewTableCell(fmt.Sprintf(" [%s::]%s", headerColor, "Platform:")),
+	)
+	table.SetCell(platformRow, valueCol1, tview.NewTableCell(""))
+
+	table.SetCell(
+		platformRow,
+		labelCol2,
+		tview.NewTableCell(fmt.Sprintf(" [%s::]%s", headerColor, "Version:")),
+	)
+	table.SetCell(platformRow, valueCol2, tview.NewTableCell(""))
+
+	// Session 和 Data Key 行
+	table.SetCell(
+		sessionRow,
+		labelCol1,
+		tview.NewTableCell(fmt.Sprintf(" [%s::]%s", headerColor, "Session:")),
+	)
+	table.SetCell(sessionRow, valueCol1, tview.NewTableCell(""))
+
+	table.SetCell(
+		sessionRow,
+		labelCol2,
+		tview.NewTableCell(fmt.Sprintf(" [%s::]%s", headerColor, "Data Key:")),
+	)
+	table.SetCell(sessionRow, valueCol2, tview.NewTableCell(""))
 
 	// Data Usage 和 Data Dir 行
 	table.SetCell(
@@ -126,6 +142,13 @@ func New() *InfoBar {
 	)
 	table.SetCell(httpServerRow, valueCol1, tview.NewTableCell(""))
 
+	table.SetCell(
+		httpServerRow,
+		labelCol2,
+		tview.NewTableCell(fmt.Sprintf(" [%s::]%s", headerColor, "Auto Decrypt:")),
+	)
+	table.SetCell(httpServerRow, valueCol2, tview.NewTableCell(""))
+
 	// infobar
 	infoBar := &InfoBar{
 		Box:   tview.NewBox(),
@@ -141,17 +164,25 @@ func (info *InfoBar) UpdateAccount(account string) {
 }
 
 func (info *InfoBar) UpdateBasicInfo(pid int, version string, exePath string) {
-	info.table.GetCell(pidRow, valueCol1).SetText(fmt.Sprintf("%d", pid))
-	info.table.GetCell(pidRow, valueCol2).SetText(exePath)
-	info.table.GetCell(accountRow, valueCol2).SetText(version)
+	info.table.GetCell(accountRow, valueCol2).SetText(fmt.Sprintf("%d", pid))
+	info.table.GetCell(statusRow, valueCol2).SetText(exePath)
+	info.table.GetCell(platformRow, valueCol2).SetText(version)
 }
 
 func (info *InfoBar) UpdateStatus(status string) {
 	info.table.GetCell(statusRow, valueCol1).SetText(status)
 }
 
+func (info *InfoBar) UpdatePlatform(text string) {
+	info.table.GetCell(platformRow, valueCol1).SetText(text)
+}
+
+func (info *InfoBar) UpdateSession(text string) {
+	info.table.GetCell(sessionRow, valueCol1).SetText(text)
+}
+
 func (info *InfoBar) UpdateDataKey(key string) {
-	info.table.GetCell(statusRow, valueCol2).SetText(key)
+	info.table.GetCell(sessionRow, valueCol2).SetText(key)
 }
 
 func (info *InfoBar) UpdateDataUsageDir(dataUsage string, dataDir string) {
@@ -167,6 +198,11 @@ func (info *InfoBar) UpdateWorkUsageDir(workUsage string, workDir string) {
 // UpdateHTTPServer updates HTTP Server value.
 func (info *InfoBar) UpdateHTTPServer(server string) {
 	info.table.GetCell(httpServerRow, valueCol1).SetText(server)
+}
+
+// UpdateAutoDecrypt updates Auto Decrypt value.
+func (info *InfoBar) UpdateAutoDecrypt(text string) {
+	info.table.GetCell(httpServerRow, valueCol2).SetText(text)
 }
 
 // Draw draws this primitive onto the screen.
