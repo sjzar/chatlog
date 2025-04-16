@@ -13,8 +13,8 @@ import (
 const (
 	V3ProcessName = "WeChat"
 	V4ProcessName = "Weixin"
-	V3DBFile      = "Msg\\Misc.db"
-	V4DBFile      = "db_storage\\message\\message_0.db"
+	V3DBFile      = `Msg\Misc.db`
+	V4DBFile      = `db_storage\session\session.db`
 )
 
 // Detector 实现 Windows 平台的进程检测器
