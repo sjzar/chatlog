@@ -77,6 +77,21 @@ func (s *Service) Start() error {
 	return nil
 }
 
+func (s *Service) ListenAndServe() error {
+
+	if s.ctx.HTTPAddr == "" {
+		s.ctx.HTTPAddr = DefalutHTTPAddr
+	}
+
+	s.server = &http.Server{
+		Addr:    s.ctx.HTTPAddr,
+		Handler: s.router,
+	}
+
+	log.Info().Msg("Starting HTTP server on " + s.ctx.HTTPAddr)
+	return s.server.ListenAndServe()
+}
+
 func (s *Service) Stop() error {
 
 	if s.server == nil {

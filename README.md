@@ -149,9 +149,9 @@ GET /api/v1/chatlog?time=2023-01-01&talker=wxid_xxx
 参数说明：
 - `time`: 时间范围，格式为 `YYYY-MM-DD` 或 `YYYY-MM-DD~YYYY-MM-DD`
 - `talker`: 聊天对象标识（支持 wxid、群聊 ID、备注名、昵称等）
-- `limit`: 返回记录数量（默认 100）
-- `offset`: 分页偏移量（默认 0）
-- `format`: 输出格式，支持 `json`、`csv` 或纯文本（默认 纯文本）
+- `limit`: 返回记录数量
+- `offset`: 分页偏移量
+- `format`: 输出格式，支持 `json`、`csv` 或纯文本
 
 ### 其他 API 接口
 
