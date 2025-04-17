@@ -16,17 +16,16 @@ import (
 )
 
 const (
-	MaxWorkers = 8
+	MaxWorkers        = 8
+	MinChunkSize      = 1 * 1024 * 1024 // 1MB
+	ChunkOverlapBytes = 1024            // Greater than all offsets
+	ChunkMultiplier   = 2               // Number of chunks = MaxWorkers * ChunkMultiplier
 )
 
 var V4KeyPatterns = []KeyPatternInfo{
 	{
 		Pattern: []byte{0x20, 0x66, 0x74, 0x73, 0x35, 0x28, 0x25, 0x00},
-		Offset:  16,
-	},
-	{
-		Pattern: []byte{0x20, 0x66, 0x74, 0x73, 0x35, 0x28, 0x25, 0x00},
-		Offset:  -80,
+		Offsets: []int{16, -80, 64},
 	},
 }
 
@@ -126,14 +125,72 @@ func (e *V4Extractor) findMemory(ctx context.Context, pid uint32, memoryChannel 
 		return err
 	}
 
-	log.Debug().Msgf("Read memory region, size: %d bytes", len(memory))
+	totalSize := len(memory)
+	log.Debug().Msgf("Read memory region, size: %d bytes", totalSize)
 
-	// Send memory data to channel for processing
-	select {
-	case memoryChannel <- memory:
-		log.Debug().Msg("Memory region sent for analysis")
-	case <-ctx.Done():
-		return ctx.Err()
+	// If memory is small enough, process it as a single chunk
+	if totalSize <= MinChunkSize {
+		select {
+		case memoryChannel <- memory:
+			log.Debug().Msg("Memory sent as a single chunk for analysis")
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		return nil
+	}
+
+	chunkCount := MaxWorkers * ChunkMultiplier
+
+	// Calculate chunk size based on fixed chunk count
+	chunkSize := totalSize / chunkCount
+	if chunkSize < MinChunkSize {
+		// Reduce number of chunks if each would be too small
+		chunkCount = totalSize / MinChunkSize
+		if chunkCount == 0 {
+			chunkCount = 1
+		}
+		chunkSize = totalSize / chunkCount
+	}
+
+	// Process memory in chunks from end to beginning
+	for i := chunkCount - 1; i >= 0; i-- {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			// Calculate start and end positions for this chunk
+			start := i * chunkSize
+			end := (i + 1) * chunkSize
+
+			// Ensure the last chunk includes all remaining memory
+			if i == chunkCount-1 {
+				end = totalSize
+			}
+
+			// Add overlap area to catch patterns at chunk boundaries
+			if i > 0 {
+				start -= ChunkOverlapBytes
+				if start < 0 {
+					start = 0
+				}
+			}
+
+			chunk := memory[start:end]
+
+			log.Debug().
+				Int("chunk_index", i+1).
+				Int("total_chunks", chunkCount).
+				Int("chunk_size", len(chunk)).
+				Int("start_offset", start).
+				Int("end_offset", end).
+				Msg("Processing memory chunk")
+
+			select {
+			case memoryChannel <- chunk:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
 	}
 
 	return nil
@@ -177,24 +234,26 @@ func (e *V4Extractor) SearchKey(ctx context.Context, memory []byte) (string, boo
 				break // No more matches found
 			}
 
-			// Check if we have enough space for the key
-			keyOffset := index + keyPattern.Offset
-			if keyOffset < 0 || keyOffset+32 > len(memory) {
-				index -= 1
-				continue
-			}
+			// Try each offset for this pattern
+			for _, offset := range keyPattern.Offsets {
+				// Check if we have enough space for the key
+				keyOffset := index + offset
+				if keyOffset < 0 || keyOffset+32 > len(memory) {
+					continue
+				}
 
-			// Extract the key data, which is 16 bytes after the pattern and 32 bytes long
-			keyData := memory[keyOffset : keyOffset+32]
+				// Extract the key data, which is at the offset position and 32 bytes long
+				keyData := memory[keyOffset : keyOffset+32]
 
-			// Validate key against database header
-			if e.validator.Validate(keyData) {
-				log.Debug().
-					Str("pattern", hex.EncodeToString(keyPattern.Pattern)).
-					Int("offset", keyPattern.Offset).
-					Str("key", hex.EncodeToString(keyData)).
-					Msg("Key found")
-				return hex.EncodeToString(keyData), true
+				// Validate key against database header
+				if keyData, ok := e.validate(ctx, keyData); ok {
+					log.Debug().
+						Str("pattern", hex.EncodeToString(keyPattern.Pattern)).
+						Int("offset", offset).
+						Str("key", hex.EncodeToString(keyData)).
+						Msg("Key found")
+					return hex.EncodeToString(keyData), true
+				}
 			}
 
 			index -= 1
@@ -204,11 +263,19 @@ func (e *V4Extractor) SearchKey(ctx context.Context, memory []byte) (string, boo
 	return "", false
 }
 
+func (e *V4Extractor) validate(ctx context.Context, keyDate []byte) ([]byte, bool) {
+	if e.validator.Validate(keyDate) {
+		return keyDate, true
+	}
+	// Try to find a valid key by ***
+	return nil, false
+}
+
 func (e *V4Extractor) SetValidate(validator *decrypt.Validator) {
 	e.validator = validator
 }
 
 type KeyPatternInfo struct {
 	Pattern []byte
-	Offset  int
+	Offsets []int
 }

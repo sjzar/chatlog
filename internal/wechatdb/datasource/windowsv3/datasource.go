@@ -35,7 +35,7 @@ var Groups = []dbm.Group{
 	},
 	{
 		Name:      Contact,
-		Pattern:   `^MicroMsg.db$`,
+		Pattern:   `^MicroMsg\.db$`,
 		BlackList: []string{},
 	},
 	{
