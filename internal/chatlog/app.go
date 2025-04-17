@@ -2,6 +2,7 @@ package chatlog
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"time"
@@ -434,8 +435,15 @@ func (a *App) initMenu() {
 		Selected:    a.settingSelected,
 	}
 
-	selectAccount := &menu.Item{
+	exportTXT := &menu.Item{
 		Index:       7,
+		Name:        "导出聊天记录",
+		Description: "导出聊天记录为AITXT格式",
+		Selected:    a.exportSelected,
+	}
+
+	selectAccount := &menu.Item{
+		Index:       8,
 		Name:        "切换账号",
 		Description: "切换当前操作的账号，可以选择进程或历史账号",
 		Selected:    a.selectAccountSelected,
@@ -446,10 +454,11 @@ func (a *App) initMenu() {
 	a.menu.AddItem(httpServer)
 	a.menu.AddItem(autoDecrypt)
 	a.menu.AddItem(setting)
+	a.menu.AddItem(exportTXT)
 	a.menu.AddItem(selectAccount)
 
 	a.menu.AddItem(&menu.Item{
-		Index:       8,
+		Index:       9,
 		Name:        "退出",
 		Description: "退出程序",
 		Selected: func(i *menu.Item) {
@@ -786,12 +795,19 @@ func (a *App) selectAccountSelected(i *menu.Item) {
 	a.SetFocus(subMenu)
 }
 
-// showModal 显示一个模态对话框
 func (a *App) showModal(text string, buttons []string, doneFunc func(buttonIndex int, buttonLabel string)) {
 	modal := tview.NewModal().
 		SetText(text).
 		AddButtons(buttons).
 		SetDoneFunc(doneFunc)
+
+	modal.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyEnter && len(buttons) > 0 {
+			doneFunc(0, buttons[0])
+			return nil
+		}
+		return event
+	})
 
 	a.mainPages.AddPage("modal", modal, true, true)
 	a.SetFocus(modal)
@@ -804,9 +820,163 @@ func (a *App) showError(err error) {
 	})
 }
 
-// showInfo 显示信息对话框
 func (a *App) showInfo(text string) {
 	a.showModal(text, []string{"OK"}, func(buttonIndex int, buttonLabel string) {
 		a.mainPages.RemovePage("modal")
 	})
+}
+
+func (a *App) exportSelected(i *menu.Item) {
+	// 创建导出子菜单
+	exportMenu := menu.NewSubMenu("导出聊天记录")
+	exportMenu.SetCancelFunc(func() {
+		a.mainPages.RemovePage("submenu")
+		a.mainPages.SwitchToPage("main")
+	})
+
+	// 检查是否有解密数据
+	if a.ctx.WorkDir == "" {
+		a.showError(fmt.Errorf("请先解密数据"))
+		return
+	}
+
+	// 确保数据库服务已启动
+	if err := a.m.db.Start(); err != nil {
+		a.showError(fmt.Errorf("启动数据库服务失败: %v", err))
+		return
+	}
+
+	// 获取联系人列表
+	contacts, err := a.m.db.GetContacts("", 0, 0)
+	if err != nil {
+		a.showError(fmt.Errorf("获取联系人列表失败: %v", err))
+		return
+	}
+
+	// 获取群聊列表
+	chatrooms, err := a.m.db.GetChatRooms("", 0, 0)
+	if err != nil {
+		a.showError(fmt.Errorf("获取群聊列表失败: %v", err))
+		return
+	}
+
+	// 添加联系人菜单项
+	index := 1
+	for _, contact := range contacts.Items {
+		contact := contact
+		name := contact.DisplayName()
+		if name == "" {
+			name = contact.UserName
+		}
+		exportMenu.AddItem(&menu.Item{
+			Index:       index,
+			Name:        name,
+			Description: contact.UserName,
+			Selected: func(mi *menu.Item) {
+				a.exportChat(contact.UserName, name)
+			},
+		})
+		index++
+	}
+
+	// 添加群聊菜单项
+	for _, chatroom := range chatrooms.Items {
+		chatroom := chatroom
+		name := chatroom.DisplayName()
+		if name == "" {
+			name = chatroom.Name
+		}
+		exportMenu.AddItem(&menu.Item{
+			Index:       index,
+			Name:        name,
+			Description: chatroom.Name,
+			Selected: func(mi *menu.Item) {
+				a.exportChat(chatroom.Name, name)
+			},
+		})
+		index++
+	}
+
+	// 显示子菜单
+	a.mainPages.AddPage("submenu", exportMenu, true, true)
+	a.mainPages.SwitchToPage("submenu")
+	a.SetFocus(exportMenu)
+}
+
+func (a *App) exportChat(talker, displayName string) {
+	// 创建选择时间范围的表单
+	timeForm := form.NewForm("选择导出时间范围")
+	timeForm.SetCancelFunc(func() {
+		a.mainPages.RemovePage("submenu")
+		a.mainPages.SwitchToPage("main")
+	})
+
+	timeForm.AddInputField("时间范围(格式为 YYYY-MM-DD 或 YYYY-MM-DD~YYYY-MM-DD)", "", 20, nil, nil)
+
+	defaultPath := filepath.Join(a.ctx.WorkDir, "export", displayName+".txt")
+	timeForm.AddInputField("输出文件路径", defaultPath, 40, nil, nil)
+
+	timeForm.AddButton("确定", func() {
+		timeRange := timeForm.GetFormItem(0).(*tview.InputField).GetText()
+		outputPath := timeForm.GetFormItem(1).(*tview.InputField).GetText()
+
+		if timeRange == "" {
+			a.showError(fmt.Errorf("请输入时间范围"))
+			return
+		}
+
+		if outputPath == "" {
+			a.showError(fmt.Errorf("请输入输出文件路径"))
+			return
+		}
+
+		// 确保输出目录存在
+		outputDir := filepath.Dir(outputPath)
+		if err := os.MkdirAll(outputDir, 0755); err != nil {
+			a.showError(fmt.Errorf("创建输出目录失败: %v", err))
+			return
+		}
+
+		// 导出聊天记录
+		go func() {
+			// 显示进度对话框
+			modal := tview.NewModal().SetText("正在导出聊天记录...")
+			a.QueueUpdateDraw(func() {
+				a.mainPages.RemovePage("submenu")
+				a.mainPages.AddPage("modal", modal, true, true)
+				a.SetFocus(modal)
+			})
+
+			// 执行导出
+			err := a.m.ExportChatlogTXT(talker, timeRange, outputPath)
+
+			// 更新UI显示结果
+			a.QueueUpdateDraw(func() {
+				if err != nil {
+					modal.SetText("导出失败: " + err.Error())
+				} else {
+					modal.SetText("导出成功，文件已保存到：\n" + outputPath)
+				}
+				modal.AddButtons([]string{"确定"})
+				modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+					a.mainPages.RemovePage("modal")
+					a.mainPages.SwitchToPage("main")
+				})
+				// 为模态框添加输入处理函数，确保回车键可以关闭对话框
+				modal.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+					if event.Key() == tcell.KeyEnter {
+						a.mainPages.RemovePage("modal")
+						a.mainPages.SwitchToPage("main")
+						return nil
+					}
+					return event
+				})
+			})
+		}()
+	})
+
+	// 显示表单
+	a.mainPages.RemovePage("submenu")
+	a.mainPages.AddPage("submenu", timeForm, true, true)
+	a.SetFocus(timeForm)
 }

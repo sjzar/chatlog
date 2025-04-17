@@ -256,3 +256,8 @@ func EmptyBoxSpace(bgColor tcell.Color) *tview.Box {
 	box.SetBorder(false)
 	return box
 }
+
+// GetFormItem returns the form item at the specified position.
+func (f *Form) GetFormItem(index int) tview.FormItem {
+	return f.form.GetFormItem(index)
+}

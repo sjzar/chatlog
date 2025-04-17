@@ -3,7 +3,9 @@ package chatlog
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/rs/zerolog/log"
@@ -13,6 +15,7 @@ import (
 	"github.com/sjzar/chatlog/internal/chatlog/http"
 	"github.com/sjzar/chatlog/internal/chatlog/mcp"
 	"github.com/sjzar/chatlog/internal/chatlog/wechat"
+	"github.com/sjzar/chatlog/internal/model"
 	iwechat "github.com/sjzar/chatlog/internal/wechat"
 	"github.com/sjzar/chatlog/pkg/util"
 	"github.com/sjzar/chatlog/pkg/util/dat2img"
@@ -346,4 +349,82 @@ func (m *Manager) CommandHTTPServer(addr string, dataDir string, workDir string,
 	}
 
 	return m.http.ListenAndServe()
+}
+
+func (m *Manager) ExportChatlogTXT(talker string, timeRange string, outputPath string) error {
+	// 先检查数据库连接
+	if m.db.GetDB() == nil {
+		if err := m.db.Start(); err != nil {
+			return fmt.Errorf("连接数据库失败: %w", err)
+		}
+		defer m.db.Stop()
+	}
+
+	// 解析时间范围
+	start, end, ok := util.TimeRangeOf(timeRange)
+	if !ok {
+		return fmt.Errorf("无效的时间格式: %s", timeRange)
+	}
+
+	// 获取消息
+	messages, err := m.db.GetMessages(start, end, talker, 0, 0)
+	if err != nil {
+		return fmt.Errorf("获取消息失败: %w", err)
+	}
+
+	if len(messages) == 0 {
+		return fmt.Errorf("指定时间范围内没有消息")
+	}
+
+	// 创建输出文件
+	f, err := os.Create(outputPath)
+	if err != nil {
+		return fmt.Errorf("创建文件失败: %w", err)
+	}
+	defer f.Close()
+
+	// 按日期分组消息
+	dateGroups := make(map[string][]*model.Message)
+	for _, msg := range messages {
+		dateKey := msg.Time.Format("2006-01-02")
+		dateGroups[dateKey] = append(dateGroups[dateKey], msg)
+	}
+
+	// 按日期顺序输出
+	dates := make([]string, 0, len(dateGroups))
+	for date := range dateGroups {
+		dates = append(dates, date)
+	}
+	sort.Strings(dates)
+
+	// 写入文件
+	for _, date := range dates {
+		msgs := dateGroups[date]
+
+		// 添加日期分隔线
+		f.WriteString("\n********************" + date + "********************\n\n")
+
+		// 输出该日期下的所有消息
+		for _, msg := range msgs {
+			host := "127.0.0.1:5030" // 默认主机
+			if m.ctx.HTTPEnabled {
+				host = m.ctx.HTTPAddr
+			}
+			senderName := msg.SenderName
+			if msg.IsSelf {
+				senderName = "我"
+			} else if senderName == "" {
+				senderName = msg.Sender
+			}
+
+			f.WriteString(senderName + " ")
+			f.WriteString(msg.Time.Format("15:04:05") + "\n")
+
+			// 设置消息内容中可能需要的主机信息
+			msg.SetContent("host", host)
+			f.WriteString(msg.PlainTextContent() + "\n\n")
+		}
+	}
+
+	return nil
 }

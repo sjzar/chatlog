@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/sjzar/chatlog/internal/errors"
+	"github.com/sjzar/chatlog/internal/model"
 	"github.com/sjzar/chatlog/pkg/util"
 	"github.com/sjzar/chatlog/pkg/util/dat2img"
 	"github.com/sjzar/chatlog/pkg/util/silk"
@@ -108,9 +110,44 @@ func (s *Service) GetChatlog(c *gin.Context) {
 
 	switch strings.ToLower(q.Format) {
 	case "csv":
+		// csv format handling can be added here
 	case "json":
 		// json
 		c.JSON(http.StatusOK, messages)
+	case "aitxt":
+		// 导出TXT格式，按日期分组
+		c.Writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		c.Writer.Header().Set("Content-Disposition", "attachment; filename=chatlog-"+q.Talker+".txt")
+		c.Writer.Header().Set("Cache-Control", "no-cache")
+		c.Writer.Header().Set("Connection", "keep-alive")
+		c.Writer.Flush()
+
+		// 按日期分组消息
+		dateGroups := make(map[string][]*model.Message)
+		for _, m := range messages {
+			dateKey := m.Time.Format("2006-01-02")
+			dateGroups[dateKey] = append(dateGroups[dateKey], m)
+		}
+
+		// 按日期顺序输出
+		dates := make([]string, 0, len(dateGroups))
+		for date := range dateGroups {
+			dates = append(dates, date)
+		}
+		sort.Strings(dates)
+
+		for _, date := range dates {
+			msgs := dateGroups[date]
+			// 添加日期分隔线
+			c.Writer.WriteString("\n********************" + date + "********************\n\n")
+
+			// 输出该日期下的所有消息
+			for _, m := range msgs {
+				c.Writer.WriteString(m.PlainTextContent())
+				c.Writer.WriteString("\n\n")
+			}
+		}
+		c.Writer.Flush()
 	default:
 		// plain text
 		c.Writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
