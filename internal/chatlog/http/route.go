@@ -141,8 +141,15 @@ func (s *Service) GetChatlog(c *gin.Context) {
 			// 添加日期分隔线
 			c.Writer.WriteString("\n********************" + date + "********************\n\n")
 
-			// 输出该日期下的所有消息
 			for _, m := range msgs {
+				senderName := m.SenderName
+				if m.IsSelf {
+					senderName = "我"
+				} else if senderName == "" {
+					senderName = m.Sender
+				}
+
+				c.Writer.WriteString(senderName + ": ")
 				c.Writer.WriteString(m.PlainTextContent())
 				c.Writer.WriteString("\n\n")
 			}

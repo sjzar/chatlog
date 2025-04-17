@@ -962,7 +962,7 @@ func (a *App) exportChat(talker, displayName string) {
 					a.mainPages.RemovePage("modal")
 					a.mainPages.SwitchToPage("main")
 				})
-				// 为模态框添加输入处理函数，确保回车键可以关闭对话框
+
 				modal.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 					if event.Key() == tcell.KeyEnter {
 						a.mainPages.RemovePage("modal")

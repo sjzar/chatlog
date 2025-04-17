@@ -417,8 +417,9 @@ func (m *Manager) ExportChatlogTXT(talker string, timeRange string, outputPath s
 				senderName = msg.Sender
 			}
 
-			f.WriteString(senderName + " ")
-			f.WriteString(msg.Time.Format("15:04:05") + "\n")
+			//f.WriteString(senderName + " ")
+			//f.WriteString(msg.Time.Format("15:04:05") + "\n")
+			f.WriteString(senderName + ": ")
 
 			// 设置消息内容中可能需要的主机信息
 			msg.SetContent("host", host)
