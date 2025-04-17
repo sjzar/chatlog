@@ -27,7 +27,7 @@ const (
 	Voice   = "voice"
 )
 
-var Groups = []dbm.Group{
+var Groups = []*dbm.Group{
 	{
 		Name:      Message,
 		Pattern:   `^MSG([0-9]?[0-9])?\.db$`,
@@ -122,6 +122,10 @@ func (ds *DataSource) initMessageDbs() error {
 	// 获取所有消息数据库文件路径
 	dbPaths, err := ds.dbm.GetDBPath(Message)
 	if err != nil {
+		if strings.Contains(err.Error(), "db file not found") {
+			ds.messageInfos = make([]MessageDBInfo, 0)
+			return nil
+		}
 		return err
 	}
 

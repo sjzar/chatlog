@@ -34,7 +34,7 @@ func NewDBManager(path string) *DBManager {
 	}
 }
 
-func (d *DBManager) AddGroup(g Group) error {
+func (d *DBManager) AddGroup(g *Group) error {
 	fg, err := filemonitor.NewFileGroup(g.Name, d.path, g.Pattern, g.BlackList)
 	if err != nil {
 		return err
