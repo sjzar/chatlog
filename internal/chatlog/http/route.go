@@ -141,17 +141,35 @@ func (s *Service) GetChatlog(c *gin.Context) {
 			// 添加日期分隔线
 			c.Writer.WriteString("\n********************" + date + "********************\n\n")
 
+			// 输出该日期下的所有消息
 			for _, m := range msgs {
-				senderName := m.SenderName
-				if m.IsSelf {
-					senderName = "我"
-				} else if senderName == "" {
-					senderName = m.Sender
-				}
+				func(msg *model.Message) {
+					defer func() {
+						if r := recover(); r != nil {
+							c.Writer.WriteString("错误消息 (处理失败)\n\n")
+							c.Writer.Flush()
+						}
+					}()
 
-				c.Writer.WriteString(senderName + ": ")
-				c.Writer.WriteString(m.PlainTextContent())
-				c.Writer.WriteString("\n\n")
+					// 获取发送者昵称
+					senderName := msg.SenderName
+					if msg.IsSelf {
+						senderName = "我"
+					} else if senderName == "" {
+						senderName = msg.Sender
+					}
+
+					// 输出发送者昵称
+					c.Writer.WriteString(senderName + ": ")
+
+					// 设置主机信息，确保媒体链接正确
+					msg.SetContent("host", c.Request.Host)
+
+					// 尝试输出消息内容
+					c.Writer.WriteString(msg.PlainTextContent())
+					c.Writer.WriteString("\n\n")
+					c.Writer.Flush()
+				}(m)
 			}
 		}
 		c.Writer.Flush()
