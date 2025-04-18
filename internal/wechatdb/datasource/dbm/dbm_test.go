@@ -9,7 +9,7 @@ import (
 func TestXxx(t *testing.T) {
 	path := "/Users/sarv/Documents/chatlog/bigjun_9e7a"
 
-	g := Group{
+	g := &Group{
 		Name:      "session",
 		Pattern:   `session\.db$`,
 		BlackList: []string{},

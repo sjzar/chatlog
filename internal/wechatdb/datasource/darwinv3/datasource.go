@@ -25,7 +25,7 @@ const (
 	Media    = "media"
 )
 
-var Groups = []dbm.Group{
+var Groups = []*dbm.Group{
 	{
 		Name:      Message,
 		Pattern:   `^msg_([0-9]?[0-9])?\.db$`,
@@ -114,6 +114,10 @@ func (ds *DataSource) initMessageDbs() error {
 
 	dbPaths, err := ds.dbm.GetDBPath(Message)
 	if err != nil {
+		if strings.Contains(err.Error(), "db file not found") {
+			ds.talkerDBMap = make(map[string]string)
+			return nil
+		}
 		return err
 	}
 	// 处理每个数据库文件
@@ -155,6 +159,10 @@ func (ds *DataSource) initMessageDbs() error {
 func (ds *DataSource) initChatRoomDb() error {
 	db, err := ds.dbm.GetDB(ChatRoom)
 	if err != nil {
+		if strings.Contains(err.Error(), "db file not found") {
+			ds.user2DisplayName = make(map[string]string)
+			return nil
+		}
 		return err
 	}
 
