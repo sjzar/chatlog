@@ -7,16 +7,69 @@ import {
   DrawerHeaderTitle,
   OverlayDrawer,
   useRestoreFocusSource,
+  Spinner,
+  DrawerFooter,
 } from '@fluentui/react-components';
 import type { DialogOpenChangeEvent, DialogOpenChangeData } from '@fluentui/react-components';
+import { CalendarStrings, DatePicker, defaultDatePickerStrings } from '@fluentui/react-datepicker-compat';
+import dayjs from 'dayjs';
 import { Dismiss24Regular } from '@fluentui/react-icons';
 import type { ChatlogItem, ChatSessionItem, GetDataParams } from '@/wechat/typing';
 import { getChatlog } from '@/wechat/WeChatService';
 import { useRequest } from '@/hooks/useRequest';
 
+const localizedStrings: CalendarStrings = {
+  ...defaultDatePickerStrings,
+  days: [
+    "X",
+    "Lunes",
+    "Martes",
+    "Miercoles",
+    "Jueves",
+    "Viernes",
+    "Sabado",
+  ],
+  shortDays: ["日", "一", "二", "三", "四", "五", "六"],
+  months: [
+    "1月",
+    "2月",
+    "3月",
+    "4月",
+    "5月",
+    "6月",
+    "7月",
+    "8月",
+    "9月",
+    "10月",
+    "11月",
+    "12月",
+  ],
+
+  shortMonths: [
+    "1月",
+    "2月",
+    "3月",
+    "4月",
+    "5月",
+    "6月",
+    "7月",
+    "8月",
+    "9月",
+    "10月",
+    "11月",
+    "12月",
+  ],
+  goToToday: "今天",
+};
+
 const useStyles = makeStyles({
   root: {
-    width: '500px',
+    width: '600px',
+  },
+  loading: {
+    marginLeft: '10px',
+    display: 'inline-block',
+    verticalAlign: 'middle',
   },
 });
 
@@ -31,24 +84,44 @@ export function ChatlogDrawer(props: ChatlogDrawerProps) {
 
   const styles = useStyles();
   const restoreFocusSourceAttributes = useRestoreFocusSource();
+  const [limit, setLimit] = React.useState(10);
+  const [offset, setOffset] = React.useState(0);
+  const [time, setTime] = React.useState(currentChatSessionItem?.nTime);
   const [chatlogs, setChatlogs] = React.useState<ChatlogItem[]>([]);
-  const { run } = useRequest<GetDataParams, ChatlogItem[]>(params => getChatlog(params!));
+  const { loading, run } = useRequest<GetDataParams, ChatlogItem[]>(params => getChatlog(params!));
 
   React.useEffect(() => {
     if (isOpen) {
-      const params = {
-        limit: 10,
-        offset: 0,
-        talker: currentChatSessionItem.userName,
-        time: currentChatSessionItem.nTime,
-      };
-      run(params).then((res) => {
-        setChatlogs(res);
-      });
+      setLimit(10);
+      setOffset(0);
+      setChatlogs([]);
+      setTime(currentChatSessionItem?.nTime ? dayjs(currentChatSessionItem.nTime).format('YYYY-MM-DD') : '');
     }
-    return () => {};
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen]);
+
+    return () => { };
+  }, [isOpen, currentChatSessionItem]);
+
+  React.useEffect(() => {
+    if (currentChatSessionItem?.userName) {
+      loadData(currentChatSessionItem.userName, time);
+    }
+
+    return () => { };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [limit, offset, time]);
+
+
+  const loadData = async (talker: string, time: string) => {
+    run({ limit, offset, talker, time })
+      .then(data => {
+        setChatlogs([...chatlogs, ...data]);
+      })
+      .catch(error => {
+        console.error(error);
+      })
+      .finally(() => {
+      });
+  };
 
   const handleOnOpenChange = (_: DialogOpenChangeEvent, { open }: DialogOpenChangeData) => {
     setIsOpen(open);
@@ -73,18 +146,27 @@ export function ChatlogDrawer(props: ChatlogDrawerProps) {
             />
           }
         >
-          Chat Session Details
+          <span>Chat Session Details({currentChatSessionItem?.userName})</span>
+          <span className={styles.loading}>
+            {loading && <Spinner size="tiny" aria-live="polite" />}
+          </span>
         </DrawerHeaderTitle>
       </DrawerHeader>
 
       <DrawerBody>
-        <ul>
-          <li>{currentChatSessionItem?.userName}</li>
-          <li>{currentChatSessionItem?.nickName}</li>
-          <li>{currentChatSessionItem?.nOrder}</li>
-          <li>{currentChatSessionItem?.nTime}</li>
-          <li>{currentChatSessionItem?.content}</li>
-        </ul>
+        <div>
+          <DatePicker
+            strings={localizedStrings}
+            value={time ? dayjs(time).toDate() : null}
+            placeholder="Select a date..."
+            formatDate={date => dayjs(date).format('YYYY-MM-DD')}
+            onSelectDate={(date) => {
+              const selectedDate = dayjs(date).format('YYYY-MM-DD');
+              setTime(selectedDate);
+              // loadData(currentChatSessionItem.userName, selectedDate);
+            }}
+          />
+        </div>
         <ul>
           {chatlogs.map((log) => (
             <li key={log.seq}>
@@ -93,6 +175,18 @@ export function ChatlogDrawer(props: ChatlogDrawerProps) {
           ))}
         </ul>
       </DrawerBody>
+
+      <DrawerFooter>
+        <Button appearance="secondary" onClick={() => setIsOpen(false)}>
+          Close
+        </Button>
+        <Button appearance="primary" onClick={() => loadData(currentChatSessionItem.userName, time)}>
+          Refresh
+        </Button>
+        <Button appearance="primary" onClick={() => setOffset(offset + limit)}>
+          Load More
+        </Button>
+      </DrawerFooter>
     </OverlayDrawer>
   );
 }

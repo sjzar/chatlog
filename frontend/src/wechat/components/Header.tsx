@@ -27,7 +27,9 @@ export function Header() {
 
   React.useEffect(() => {
     const path = location.pathname.split("/")[1];
-    setSelectedValue(path);
+    if (path) {
+      setSelectedValue(path);
+    }
   }, [location]);
 
   const handleOnTabSelect: SelectTabEventHandler = (_, data) => {

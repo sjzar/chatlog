@@ -10,27 +10,29 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@fluentui/react-components": "^9.61.6",
+    "@fluentui/react-components": "^9.62.0",
+    "@fluentui/react-datepicker-compat": "^0.5.5",
     "@fluentui/react-icons": "^2.0.297",
     "axios": "^1.8.4",
+    "dayjs": "^1.11.13",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-hot-toast": "^2.5.2",
-    "react-router": "^7.5.0",
+    "react-router": "^7.5.1",
     "recoil": "^0.7.7"
   },
   "devDependencies": {
     "@eslint/js": "^9.24.0",
     "@types/node": "^22.14.1",
-    "@types/react": "^19.1.1",
+    "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
-    "@vitejs/plugin-react": "^4.3.4",
+    "@vitejs/plugin-react": "^4.4.0",
     "eslint": "^9.24.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.19",
     "globals": "^16.0.0",
     "typescript": "~5.8.3",
-    "typescript-eslint": "^8.29.1",
-    "vite": "^6.2.6"
+    "typescript-eslint": "^8.30.1",
+    "vite": "^6.3.2"
   }
 }
