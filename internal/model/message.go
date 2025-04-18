@@ -183,7 +183,11 @@ func (m *Message) SetContent(key string, value interface{}) {
 	m.Contents[key] = value
 }
 
-func (m *Message) PlainText(showChatRoom bool, host string) string {
+func (m *Message) PlainText(showChatRoom bool, timeFormat string, host string) string {
+
+	if timeFormat == "" {
+		timeFormat = "01-02 15:04:05"
+	}
 
 	m.SetContent("host", host)
 
@@ -216,7 +220,7 @@ func (m *Message) PlainText(showChatRoom bool, host string) string {
 		buf.WriteString("] ")
 	}
 
-	buf.WriteString(m.Time.Format("2006-01-02 15:04:05"))
+	buf.WriteString(m.Time.Format(timeFormat))
 	buf.WriteString("\n")
 
 	buf.WriteString(m.PlainTextContent())
@@ -262,7 +266,11 @@ func (m *Message) PlainTextContent() string {
 			if !ok {
 				return "[合并转发]"
 			}
-			return recordInfo.String("", m.Contents["host"].(string))
+			host := ""
+			if m.Contents["host"] != nil {
+				host = m.Contents["host"].(string)
+			}
+			return recordInfo.String("", host)
 		case 33, 36:
 			if m.Contents["title"] == "" {
 				return "[小程序]"
@@ -290,7 +298,11 @@ func (m *Message) PlainTextContent() string {
 				return "> [引用]\n" + m.Content
 			}
 			buf := strings.Builder{}
-			referContent := refer.PlainText(false, m.Contents["host"].(string))
+			host := ""
+			if m.Contents["host"] != nil {
+				host = m.Contents["host"].(string)
+			}
+			referContent := refer.PlainText(false, "", host)
 			for _, line := range strings.Split(referContent, "\n") {
 				if line == "" {
 					continue

@@ -2,6 +2,7 @@ package errors
 
 import (
 	"net/http"
+	"runtime/debug"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -50,7 +51,7 @@ func RecoveryMiddleware() gin.HandlerFunc {
 				}
 
 				// 记录错误日志
-				log.Err(err).Msg("PANIC RECOVERED")
+				log.Err(err).Msgf("PANIC RECOVERED\n%s", string(debug.Stack()))
 
 				// 返回 500 错误
 				c.JSON(http.StatusInternalServerError, err)

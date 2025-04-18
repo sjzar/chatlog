@@ -57,11 +57,11 @@ func (w *DB) Initialize() error {
 	return nil
 }
 
-func (w *DB) GetMessages(start, end time.Time, talker string, limit, offset int) ([]*model.Message, error) {
+func (w *DB) GetMessages(start, end time.Time, talker string, sender string, keyword string, limit, offset int) ([]*model.Message, error) {
 	ctx := context.Background()
 
 	// 使用 repository 获取消息
-	messages, err := w.repo.GetMessages(ctx, start, end, talker, limit, offset)
+	messages, err := w.repo.GetMessages(ctx, start, end, talker, sender, keyword, limit, offset)
 	if err != nil {
 		return nil, err
 	}

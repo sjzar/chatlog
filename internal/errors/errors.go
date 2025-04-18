@@ -65,7 +65,7 @@ func Newf(cause error, code int, format string, args ...interface{}) *Error {
 	return &Error{
 		Message: fmt.Sprintf(format, args...),
 		Cause:   cause,
-		Code:    http.StatusInternalServerError,
+		Code:    code,
 	}
 }
 

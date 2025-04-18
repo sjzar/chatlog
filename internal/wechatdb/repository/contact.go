@@ -18,9 +18,9 @@ func (r *Repository) initContactCache(ctx context.Context) error {
 	}
 
 	contactMap := make(map[string]*model.Contact)
-	aliasMap := make(map[string]*model.Contact)
-	remarkMap := make(map[string]*model.Contact)
-	nickNameMap := make(map[string]*model.Contact)
+	aliasMap := make(map[string][]*model.Contact)
+	remarkMap := make(map[string][]*model.Contact)
+	nickNameMap := make(map[string][]*model.Contact)
 	chatRoomUserMap := make(map[string]*model.Contact)
 	chatRoomInContactMap := make(map[string]*model.Contact)
 	contactList := make([]string, 0)
@@ -34,15 +34,30 @@ func (r *Repository) initContactCache(ctx context.Context) error {
 
 		// 建立快速查找索引
 		if contact.Alias != "" {
-			aliasMap[contact.Alias] = contact
+			alias, ok := aliasMap[contact.Alias]
+			if !ok {
+				alias = make([]*model.Contact, 0)
+			}
+			alias = append(alias, contact)
+			aliasMap[contact.Alias] = alias
 			aliasList = append(aliasList, contact.Alias)
 		}
 		if contact.Remark != "" {
-			remarkMap[contact.Remark] = contact
+			remark, ok := remarkMap[contact.Remark]
+			if !ok {
+				remark = make([]*model.Contact, 0)
+			}
+			remark = append(remark, contact)
+			remarkMap[contact.Remark] = remark
 			remarkList = append(remarkList, contact.Remark)
 		}
 		if contact.NickName != "" {
-			nickNameMap[contact.NickName] = contact
+			nickName, ok := nickNameMap[contact.NickName]
+			if !ok {
+				nickName = make([]*model.Contact, 0)
+			}
+			nickName = append(nickName, contact)
+			nickNameMap[contact.NickName] = nickName
 			nickNameList = append(nickNameList, contact.NickName)
 		}
 
@@ -88,7 +103,7 @@ func (r *Repository) GetContacts(ctx context.Context, key string, limit, offset 
 	if key != "" {
 		ret = r.findContacts(key)
 		if len(ret) == 0 {
-			return nil, errors.ContactNotFound(key)
+			return []*model.Contact{}, nil
 		}
 		if limit > 0 {
 			end := offset + limit
@@ -124,29 +139,29 @@ func (r *Repository) findContact(key string) *model.Contact {
 		return contact
 	}
 	if contact, ok := r.aliasToContact[key]; ok {
-		return contact
+		return contact[0]
 	}
 	if contact, ok := r.remarkToContact[key]; ok {
-		return contact
+		return contact[0]
 	}
 	if contact, ok := r.nickNameToContact[key]; ok {
-		return contact
+		return contact[0]
 	}
 
 	// Contain
 	for _, alias := range r.aliasList {
 		if strings.Contains(alias, key) {
-			return r.aliasToContact[alias]
+			return r.aliasToContact[alias][0]
 		}
 	}
 	for _, remark := range r.remarkList {
 		if strings.Contains(remark, key) {
-			return r.remarkToContact[remark]
+			return r.remarkToContact[remark][0]
 		}
 	}
 	for _, nickName := range r.nickNameList {
 		if strings.Contains(nickName, key) {
-			return r.nickNameToContact[nickName]
+			return r.nickNameToContact[nickName][0]
 		}
 	}
 	return nil
@@ -159,37 +174,62 @@ func (r *Repository) findContacts(key string) []*model.Contact {
 		ret = append(ret, contact)
 		distinct[contact.UserName] = true
 	}
-	if contact, ok := r.aliasToContact[key]; ok && !distinct[contact.UserName] {
-		ret = append(ret, contact)
-		distinct[contact.UserName] = true
+	if contacts, ok := r.aliasToContact[key]; ok {
+		for _, contact := range contacts {
+			if !distinct[contact.UserName] {
+				ret = append(ret, contact)
+				distinct[contact.UserName] = true
+			}
+		}
 	}
-	if contact, ok := r.remarkToContact[key]; ok && !distinct[contact.UserName] {
-		ret = append(ret, contact)
-		distinct[contact.UserName] = true
+	if contacts, ok := r.remarkToContact[key]; ok {
+		for _, contact := range contacts {
+			if !distinct[contact.UserName] {
+				ret = append(ret, contact)
+				distinct[contact.UserName] = true
+			}
+		}
 	}
-	if contact, ok := r.nickNameToContact[key]; ok && !distinct[contact.UserName] {
-		ret = append(ret, contact)
-		distinct[contact.UserName] = true
+	if contacts, ok := r.nickNameToContact[key]; ok {
+		for _, contact := range contacts {
+			if !distinct[contact.UserName] {
+				ret = append(ret, contact)
+				distinct[contact.UserName] = true
+			}
+		}
 	}
 	// Contain
 	for _, alias := range r.aliasList {
-		if strings.Contains(alias, key) && !distinct[r.aliasToContact[alias].UserName] {
-			ret = append(ret, r.aliasToContact[alias])
-			distinct[r.aliasToContact[alias].UserName] = true
+		if strings.Contains(alias, key) {
+			for _, contact := range r.aliasToContact[alias] {
+				if !distinct[contact.UserName] {
+					ret = append(ret, contact)
+					distinct[contact.UserName] = true
+				}
+			}
 		}
 	}
 	for _, remark := range r.remarkList {
-		if strings.Contains(remark, key) && !distinct[r.remarkToContact[remark].UserName] {
-			ret = append(ret, r.remarkToContact[remark])
-			distinct[r.remarkToContact[remark].UserName] = true
+		if strings.Contains(remark, key) {
+			for _, contact := range r.remarkToContact[remark] {
+				if !distinct[contact.UserName] {
+					ret = append(ret, contact)
+					distinct[contact.UserName] = true
+				}
+			}
 		}
 	}
 	for _, nickName := range r.nickNameList {
-		if strings.Contains(nickName, key) && !distinct[r.nickNameToContact[nickName].UserName] {
-			ret = append(ret, r.nickNameToContact[nickName])
-			distinct[r.nickNameToContact[nickName].UserName] = true
+		if strings.Contains(nickName, key) {
+			for _, contact := range r.nickNameToContact[nickName] {
+				if !distinct[contact.UserName] {
+					ret = append(ret, contact)
+					distinct[contact.UserName] = true
+				}
+			}
 		}
 	}
+
 	return ret
 }
 

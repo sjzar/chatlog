@@ -582,8 +582,8 @@ func adjustStartTime(t time.Time, g TimeGranularity) time.Time {
 func adjustEndTime(t time.Time, g TimeGranularity) time.Time {
 	switch g {
 	case GranularitySecond, GranularityMinute, GranularityHour:
-		// 对于精确到秒/分钟/小时的时间，设置为当天结束
-		return time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 999999999, t.Location())
+		// 对于精确到秒/分钟/小时的时间，保持原样
+		return t
 	case GranularityDay:
 		// 精确到天，设置为当天结束
 		return time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 999999999, t.Location())
@@ -633,4 +633,26 @@ func isValidDate(year, month, day int) bool {
 	}
 
 	return day <= daysInMonth
+}
+
+func PerfectTimeFormat(start time.Time, end time.Time) string {
+	endTime := end
+
+	// 如果结束时间是某一天的 0 点整，将其减去 1 秒，视为前一天的结束
+	if endTime.Hour() == 0 && endTime.Minute() == 0 && endTime.Second() == 0 && endTime.Nanosecond() == 0 {
+		endTime = endTime.Add(-time.Second) // 减去 1 秒
+	}
+
+	// 判断是否跨年
+	if start.Year() != endTime.Year() {
+		return "2006-01-02 15:04:05" // 完整格式，包含年月日时分秒
+	}
+
+	// 判断是否跨天（但在同一年内）
+	if start.YearDay() != endTime.YearDay() {
+		return "01-02 15:04:05" // 月日时分秒格式
+	}
+
+	// 在同一天内
+	return "15:04:05" // 只显示时分秒
 }

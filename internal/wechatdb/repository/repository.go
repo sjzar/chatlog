@@ -17,9 +17,9 @@ type Repository struct {
 
 	// Cache for contact
 	contactCache      map[string]*model.Contact
-	aliasToContact    map[string]*model.Contact
-	remarkToContact   map[string]*model.Contact
-	nickNameToContact map[string]*model.Contact
+	aliasToContact    map[string][]*model.Contact
+	remarkToContact   map[string][]*model.Contact
+	nickNameToContact map[string][]*model.Contact
 	chatRoomInContact map[string]*model.Contact
 	contactList       []string
 	aliasList         []string
@@ -28,8 +28,8 @@ type Repository struct {
 
 	// Cache for chat room
 	chatRoomCache      map[string]*model.ChatRoom
-	remarkToChatRoom   map[string]*model.ChatRoom
-	nickNameToChatRoom map[string]*model.ChatRoom
+	remarkToChatRoom   map[string][]*model.ChatRoom
+	nickNameToChatRoom map[string][]*model.ChatRoom
 	chatRoomList       []string
 	chatRoomRemark     []string
 	chatRoomNickName   []string
@@ -43,17 +43,17 @@ func New(ds datasource.DataSource) (*Repository, error) {
 	r := &Repository{
 		ds:                 ds,
 		contactCache:       make(map[string]*model.Contact),
-		aliasToContact:     make(map[string]*model.Contact),
-		remarkToContact:    make(map[string]*model.Contact),
-		nickNameToContact:  make(map[string]*model.Contact),
+		aliasToContact:     make(map[string][]*model.Contact),
+		remarkToContact:    make(map[string][]*model.Contact),
+		nickNameToContact:  make(map[string][]*model.Contact),
 		chatRoomUserToInfo: make(map[string]*model.Contact),
 		contactList:        make([]string, 0),
 		aliasList:          make([]string, 0),
 		remarkList:         make([]string, 0),
 		nickNameList:       make([]string, 0),
 		chatRoomCache:      make(map[string]*model.ChatRoom),
-		remarkToChatRoom:   make(map[string]*model.ChatRoom),
-		nickNameToChatRoom: make(map[string]*model.ChatRoom),
+		remarkToChatRoom:   make(map[string][]*model.ChatRoom),
+		nickNameToChatRoom: make(map[string][]*model.ChatRoom),
 		chatRoomList:       make([]string, 0),
 		chatRoomRemark:     make([]string, 0),
 		chatRoomNickName:   make([]string, 0),

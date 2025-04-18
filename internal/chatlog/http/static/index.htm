@@ -377,12 +377,12 @@
               </p>
             </div>
             <div class="form-group">
-              <label for="chatroom-query"
+              <label for="chatroom-keyword"
                 >搜索群聊：<span class="optional-param">可选</span></label
               >
               <input
                 type="text"
-                id="chatroom-query"
+                id="chatroom-keyword"
                 placeholder="输入关键词搜索群聊"
               />
             </div>
@@ -408,12 +408,12 @@
               </p>
             </div>
             <div class="form-group">
-              <label for="contact-query"
+              <label for="contact-keyword"
                 >搜索联系人：<span class="optional-param">可选</span></label
               >
               <input
                 type="text"
-                id="contact-query"
+                id="contact-keyword"
                 placeholder="输入关键词搜索联系人"
               />
             </div>
@@ -457,6 +457,26 @@
                 type="text"
                 id="talker"
                 placeholder="wxid、群ID、备注名或昵称"
+              />
+            </div>
+            <div class="form-group">
+              <label for="sender"
+                >发送者：<span class="optional-param">可选</span></label
+              >
+              <input
+                type="text"
+                id="sender"
+                placeholder="指定消息发送者"
+              />
+            </div>
+            <div class="form-group">
+              <label for="keyword"
+                >关键词：<span class="optional-param">可选</span></label
+              >
+              <input
+                type="text"
+                id="keyword"
+                placeholder="搜索消息内容中的关键词"
               />
             </div>
             <div class="form-group">
@@ -603,6 +623,8 @@
                 url += "chatlog";
                 const time = document.getElementById("time").value;
                 const talker = document.getElementById("talker").value;
+                const sender = document.getElementById("sender").value;
+                const keyword = document.getElementById("keyword").value;
                 const limit = document.getElementById("limit").value;
                 const offset = document.getElementById("offset").value;
                 const format = document.getElementById("format").value;
@@ -617,6 +639,8 @@
 
                 if (time) params.append("time", time);
                 if (talker) params.append("talker", talker);
+                if (sender) params.append("sender", sender);
+                if (keyword) params.append("keyword", keyword);
                 if (limit) params.append("limit", limit);
                 if (offset) params.append("offset", offset);
                 if (format) params.append("format", format);
@@ -624,23 +648,23 @@
 
               case "contact":
                 url += "contact";
-                const contactQuery =
-                  document.getElementById("contact-query").value;
+                const contactKeyword =
+                  document.getElementById("contact-keyword").value;
                 const contactFormat =
                   document.getElementById("contact-format").value;
 
-                if (contactQuery) params.append("query", contactQuery);
+                if (contactKeyword) params.append("keyword", contactKeyword);
                 if (contactFormat) params.append("format", contactFormat);
                 break;
 
               case "chatroom":
                 url += "chatroom";
-                const chatroomQuery =
-                  document.getElementById("chatroom-query").value;
+                const chatroomKeyword =
+                  document.getElementById("chatroom-keyword").value;
                 const chatroomFormat =
                   document.getElementById("chatroom-format").value;
 
-                if (chatroomQuery) params.append("query", chatroomQuery);
+                if (chatroomKeyword) params.append("keyword", chatroomKeyword);
                 if (chatroomFormat) params.append("format", chatroomFormat);
                 break;
 

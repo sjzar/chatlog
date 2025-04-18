@@ -18,8 +18,8 @@ func (r *Repository) initChatRoomCache(ctx context.Context) error {
 	}
 
 	chatRoomMap := make(map[string]*model.ChatRoom)
-	remarkToChatRoom := make(map[string]*model.ChatRoom)
-	nickNameToChatRoom := make(map[string]*model.ChatRoom)
+	remarkToChatRoom := make(map[string][]*model.ChatRoom)
+	nickNameToChatRoom := make(map[string][]*model.ChatRoom)
 	chatRoomList := make([]string, 0)
 	chatRoomRemark := make([]string, 0)
 	chatRoomNickName := make([]string, 0)
@@ -30,11 +30,21 @@ func (r *Repository) initChatRoomCache(ctx context.Context) error {
 		chatRoomMap[chatRoom.Name] = chatRoom
 		chatRoomList = append(chatRoomList, chatRoom.Name)
 		if chatRoom.Remark != "" {
-			remarkToChatRoom[chatRoom.Remark] = chatRoom
+			remark, ok := remarkToChatRoom[chatRoom.Remark]
+			if !ok {
+				remark = make([]*model.ChatRoom, 0)
+			}
+			remark = append(remark, chatRoom)
+			remarkToChatRoom[chatRoom.Remark] = remark
 			chatRoomRemark = append(chatRoomRemark, chatRoom.Remark)
 		}
 		if chatRoom.NickName != "" {
-			nickNameToChatRoom[chatRoom.NickName] = chatRoom
+			nickName, ok := nickNameToChatRoom[chatRoom.NickName]
+			if !ok {
+				nickName = make([]*model.ChatRoom, 0)
+			}
+			nickName = append(nickName, chatRoom)
+			nickNameToChatRoom[chatRoom.NickName] = nickName
 			chatRoomNickName = append(chatRoomNickName, chatRoom.NickName)
 		}
 	}
@@ -49,11 +59,21 @@ func (r *Repository) initChatRoomCache(ctx context.Context) error {
 			chatRoomMap[contact.UserName] = chatRoom
 			chatRoomList = append(chatRoomList, contact.UserName)
 			if contact.Remark != "" {
-				remarkToChatRoom[contact.Remark] = chatRoom
+				remark, ok := remarkToChatRoom[chatRoom.Remark]
+				if !ok {
+					remark = make([]*model.ChatRoom, 0)
+				}
+				remark = append(remark, chatRoom)
+				remarkToChatRoom[chatRoom.Remark] = remark
 				chatRoomRemark = append(chatRoomRemark, contact.Remark)
 			}
 			if contact.NickName != "" {
-				nickNameToChatRoom[contact.NickName] = chatRoom
+				nickName, ok := nickNameToChatRoom[chatRoom.NickName]
+				if !ok {
+					nickName = make([]*model.ChatRoom, 0)
+				}
+				nickName = append(nickName, chatRoom)
+				nickNameToChatRoom[chatRoom.NickName] = nickName
 				chatRoomNickName = append(chatRoomNickName, contact.NickName)
 			}
 		}
@@ -63,9 +83,12 @@ func (r *Repository) initChatRoomCache(ctx context.Context) error {
 	sort.Strings(chatRoomNickName)
 
 	r.chatRoomCache = chatRoomMap
-	r.chatRoomList = chatRoomList
 	r.remarkToChatRoom = remarkToChatRoom
 	r.nickNameToChatRoom = nickNameToChatRoom
+	r.chatRoomList = chatRoomList
+	r.chatRoomRemark = chatRoomRemark
+	r.chatRoomNickName = chatRoomNickName
+
 	return nil
 }
 
@@ -75,7 +98,7 @@ func (r *Repository) GetChatRooms(ctx context.Context, key string, limit, offset
 	if key != "" {
 		ret = r.findChatRooms(key)
 		if len(ret) == 0 {
-			return nil, errors.ChatRoomNotFound(key)
+			return []*model.ChatRoom{}, nil
 		}
 
 		if limit > 0 {
@@ -129,21 +152,21 @@ func (r *Repository) findChatRoom(key string) *model.ChatRoom {
 		return chatRoom
 	}
 	if chatRoom, ok := r.remarkToChatRoom[key]; ok {
-		return chatRoom
+		return chatRoom[0]
 	}
 	if chatRoom, ok := r.nickNameToChatRoom[key]; ok {
-		return chatRoom
+		return chatRoom[0]
 	}
 
 	// Contain
 	for _, remark := range r.chatRoomRemark {
 		if strings.Contains(remark, key) {
-			return r.remarkToChatRoom[remark]
+			return r.remarkToChatRoom[remark][0]
 		}
 	}
 	for _, nickName := range r.chatRoomNickName {
 		if strings.Contains(nickName, key) {
-			return r.nickNameToChatRoom[nickName]
+			return r.nickNameToChatRoom[nickName][0]
 		}
 	}
 
@@ -157,26 +180,42 @@ func (r *Repository) findChatRooms(key string) []*model.ChatRoom {
 		ret = append(ret, chatRoom)
 		distinct[chatRoom.Name] = true
 	}
-	if chatRoom, ok := r.remarkToChatRoom[key]; ok && !distinct[chatRoom.Name] {
-		ret = append(ret, chatRoom)
-		distinct[chatRoom.Name] = true
+	if chatRooms, ok := r.remarkToChatRoom[key]; ok {
+		for _, chatRoom := range chatRooms {
+			if !distinct[chatRoom.Name] {
+				ret = append(ret, chatRoom)
+				distinct[chatRoom.Name] = true
+			}
+		}
 	}
-	if chatRoom, ok := r.nickNameToChatRoom[key]; ok && !distinct[chatRoom.Name] {
-		ret = append(ret, chatRoom)
-		distinct[chatRoom.Name] = true
+	if chatRooms, ok := r.nickNameToChatRoom[key]; ok {
+		for _, chatRoom := range chatRooms {
+			if !distinct[chatRoom.Name] {
+				ret = append(ret, chatRoom)
+				distinct[chatRoom.Name] = true
+			}
+		}
 	}
 
 	// Contain
 	for _, remark := range r.chatRoomRemark {
-		if strings.Contains(remark, key) && !distinct[r.remarkToChatRoom[remark].Name] {
-			ret = append(ret, r.remarkToChatRoom[remark])
-			distinct[r.remarkToChatRoom[remark].Name] = true
+		if strings.Contains(remark, key) {
+			for _, chatRoom := range r.remarkToChatRoom[remark] {
+				if !distinct[chatRoom.Name] {
+					ret = append(ret, chatRoom)
+					distinct[chatRoom.Name] = true
+				}
+			}
 		}
 	}
 	for _, nickName := range r.chatRoomNickName {
-		if strings.Contains(nickName, key) && !distinct[r.nickNameToChatRoom[nickName].Name] {
-			ret = append(ret, r.nickNameToChatRoom[nickName])
-			distinct[r.nickNameToChatRoom[nickName].Name] = true
+		if strings.Contains(nickName, key) {
+			for _, chatRoom := range r.nickNameToChatRoom[nickName] {
+				if !distinct[chatRoom.Name] {
+					ret = append(ret, chatRoom)
+					distinct[chatRoom.Name] = true
+				}
+			}
 		}
 	}
 
