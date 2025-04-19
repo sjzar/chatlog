@@ -40,8 +40,8 @@ func (s *Service) GetDB() *wechatdb.DB {
 	return s.db
 }
 
-func (s *Service) GetMessages(start, end time.Time, talker string, limit, offset int) ([]*model.Message, error) {
-	return s.db.GetMessages(start, end, talker, limit, offset)
+func (s *Service) GetMessages(start, end time.Time, talker string, sender string, keyword string, limit, offset int) ([]*model.Message, error) {
+	return s.db.GetMessages(start, end, talker, sender, keyword, limit, offset)
 }
 
 func (s *Service) GetContacts(key string, limit, offset int) (*wechatdb.GetContactsResp, error) {

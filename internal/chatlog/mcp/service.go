@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/sjzar/chatlog/internal/chatlog/ctx"
 	"github.com/sjzar/chatlog/internal/chatlog/database"
@@ -83,6 +84,7 @@ func (s *Service) processMCP(session *mcp.Session, req *mcp.Request) {
 			ToolChatRoom,
 			ToolRecentChat,
 			ToolChatLog,
+			ToolCurrentTime,
 		}})
 	case mcp.MethodToolsCall:
 		err = s.toolsCall(session, req)
@@ -130,13 +132,13 @@ func (s *Service) toolsCall(session *mcp.Session, req *mcp.Request) error {
 	buf := &bytes.Buffer{}
 	switch callReq.Name {
 	case "query_contact":
-		query := ""
-		if v, ok := callReq.Arguments["query"]; ok {
-			query = v.(string)
+		keyword := ""
+		if v, ok := callReq.Arguments["keyword"]; ok {
+			keyword = v.(string)
 		}
 		limit := util.MustAnyToInt(callReq.Arguments["limit"])
 		offset := util.MustAnyToInt(callReq.Arguments["offset"])
-		list, err := s.db.GetContacts(query, limit, offset)
+		list, err := s.db.GetContacts(keyword, limit, offset)
 		if err != nil {
 			return fmt.Errorf("无法获取联系人列表: %v", err)
 		}
@@ -145,13 +147,13 @@ func (s *Service) toolsCall(session *mcp.Session, req *mcp.Request) error {
 			buf.WriteString(fmt.Sprintf("%s,%s,%s,%s\n", contact.UserName, contact.Alias, contact.Remark, contact.NickName))
 		}
 	case "query_chat_room":
-		query := ""
-		if v, ok := callReq.Arguments["query"]; ok {
-			query = v.(string)
+		keyword := ""
+		if v, ok := callReq.Arguments["keyword"]; ok {
+			keyword = v.(string)
 		}
 		limit := util.MustAnyToInt(callReq.Arguments["limit"])
 		offset := util.MustAnyToInt(callReq.Arguments["offset"])
-		list, err := s.db.GetChatRooms(query, limit, offset)
+		list, err := s.db.GetChatRooms(keyword, limit, offset)
 		if err != nil {
 			return fmt.Errorf("无法获取群聊列表: %v", err)
 		}
@@ -160,13 +162,13 @@ func (s *Service) toolsCall(session *mcp.Session, req *mcp.Request) error {
 			buf.WriteString(fmt.Sprintf("%s,%s,%s,%s,%d\n", chatRoom.Name, chatRoom.Remark, chatRoom.NickName, chatRoom.Owner, len(chatRoom.Users)))
 		}
 	case "query_recent_chat":
-		query := ""
-		if v, ok := callReq.Arguments["query"]; ok {
-			query = v.(string)
+		keyword := ""
+		if v, ok := callReq.Arguments["keyword"]; ok {
+			keyword = v.(string)
 		}
 		limit := util.MustAnyToInt(callReq.Arguments["limit"])
 		offset := util.MustAnyToInt(callReq.Arguments["offset"])
-		data, err := s.db.GetSessions(query, limit, offset)
+		data, err := s.db.GetSessions(keyword, limit, offset)
 		if err != nil {
 			return fmt.Errorf("无法获取会话列表: %v", err)
 		}
@@ -190,16 +192,29 @@ func (s *Service) toolsCall(session *mcp.Session, req *mcp.Request) error {
 		if v, ok := callReq.Arguments["talker"]; ok {
 			talker = v.(string)
 		}
+		sender := ""
+		if v, ok := callReq.Arguments["sender"]; ok {
+			sender = v.(string)
+		}
+		keyword := ""
+		if v, ok := callReq.Arguments["keyword"]; ok {
+			keyword = v.(string)
+		}
 		limit := util.MustAnyToInt(callReq.Arguments["limit"])
 		offset := util.MustAnyToInt(callReq.Arguments["offset"])
-		messages, err := s.db.GetMessages(start, end, talker, limit, offset)
+		messages, err := s.db.GetMessages(start, end, talker, sender, keyword, limit, offset)
 		if err != nil {
 			return fmt.Errorf("无法获取聊天记录: %v", err)
 		}
+		if len(messages) == 0 {
+			buf.WriteString("未找到符合查询条件的聊天记录")
+		}
 		for _, m := range messages {
-			buf.WriteString(m.PlainText(len(talker) == 0, ""))
+			buf.WriteString(m.PlainText(strings.Contains(talker, ","), util.PerfectTimeFormat(start, end), ""))
 			buf.WriteString("\n")
 		}
+	case "current_time":
+		buf.WriteString(time.Now().Local().Format(time.RFC3339))
 	default:
 		return fmt.Errorf("未支持的工具: %s", callReq.Name)
 	}
@@ -228,7 +243,6 @@ func (s *Service) resourcesRead(session *mcp.Session, req *mcp.Request) error {
 	buf := &bytes.Buffer{}
 	switch u.Scheme {
 	case "contact":
-
 		list, err := s.db.GetContacts(u.Host, 0, 0)
 		if err != nil {
 			return fmt.Errorf("无法获取联系人列表: %v", err)
@@ -262,12 +276,15 @@ func (s *Service) resourcesRead(session *mcp.Session, req *mcp.Request) error {
 		}
 		limit := util.MustAnyToInt(u.Query().Get("limit"))
 		offset := util.MustAnyToInt(u.Query().Get("offset"))
-		messages, err := s.db.GetMessages(start, end, u.Host, limit, offset)
+		messages, err := s.db.GetMessages(start, end, u.Host, "", "", limit, offset)
 		if err != nil {
 			return fmt.Errorf("无法获取聊天记录: %v", err)
 		}
+		if len(messages) == 0 {
+			buf.WriteString("未找到符合查询条件的聊天记录")
+		}
 		for _, m := range messages {
-			buf.WriteString(m.PlainText(len(u.Host) == 0, ""))
+			buf.WriteString(m.PlainText(strings.Contains(u.Host, ","), util.PerfectTimeFormat(start, end), ""))
 			buf.WriteString("\n")
 		}
 	default:

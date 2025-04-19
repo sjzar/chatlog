@@ -2,23 +2,20 @@ package repository
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/sjzar/chatlog/internal/model"
+	"github.com/sjzar/chatlog/pkg/util"
 
 	"github.com/rs/zerolog/log"
 )
 
 // GetMessages 实现 Repository 接口的 GetMessages 方法
-func (r *Repository) GetMessages(ctx context.Context, startTime, endTime time.Time, talker string, limit, offset int) ([]*model.Message, error) {
+func (r *Repository) GetMessages(ctx context.Context, startTime, endTime time.Time, talker string, sender string, keyword string, limit, offset int) ([]*model.Message, error) {
 
-	if contact, _ := r.GetContact(ctx, talker); contact != nil {
-		talker = contact.UserName
-	} else if chatRoom, _ := r.GetChatRoom(ctx, talker); chatRoom != nil {
-		talker = chatRoom.Name
-	}
-
-	messages, err := r.ds.GetMessages(ctx, startTime, endTime, talker, limit, offset)
+	talker, sender = r.parseTalkerAndSender(ctx, talker, sender)
+	messages, err := r.ds.GetMessages(ctx, startTime, endTime, talker, sender, keyword, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -61,4 +58,54 @@ func (r *Repository) enrichMessage(msg *model.Message) {
 			msg.SenderName = contact.DisplayName()
 		}
 	}
+}
+
+func (r *Repository) parseTalkerAndSender(ctx context.Context, talker, sender string) (string, string) {
+	displayName2User := make(map[string]string)
+	users := make(map[string]bool)
+
+	talkers := util.Str2List(talker, ",")
+	if len(talkers) > 0 {
+		for i := 0; i < len(talkers); i++ {
+			if contact, _ := r.GetContact(ctx, talkers[i]); contact != nil {
+				talkers[i] = contact.UserName
+			} else if chatRoom, _ := r.GetChatRoom(ctx, talker); chatRoom != nil {
+				talkers[i] = chatRoom.Name
+			}
+		}
+		// 获取群聊的用户列表
+		for i := 0; i < len(talkers); i++ {
+			if chatRoom, _ := r.GetChatRoom(ctx, talkers[i]); chatRoom != nil {
+				for user, displayName := range chatRoom.User2DisplayName {
+					displayName2User[displayName] = user
+				}
+				for _, user := range chatRoom.Users {
+					users[user.UserName] = true
+				}
+			}
+		}
+		talker = strings.Join(talkers, ",")
+	}
+
+	senders := util.Str2List(sender, ",")
+	if len(senders) > 0 {
+		for i := 0; i < len(senders); i++ {
+			if user, ok := displayName2User[senders[i]]; ok {
+				senders[i] = user
+			} else {
+				// FIXME 大量群聊用户名称重复，无法直接通过 GetContact 获取 ID，后续再优化
+				for user := range users {
+					if contact := r.getFullContact(user); contact != nil {
+						if contact.DisplayName() == senders[i] {
+							senders[i] = user
+							break
+						}
+					}
+				}
+			}
+		}
+		sender = strings.Join(senders, ",")
+	}
+
+	return talker, sender
 }

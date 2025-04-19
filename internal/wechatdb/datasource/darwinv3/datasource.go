@@ -5,6 +5,8 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/sjzar/chatlog/internal/errors"
 	"github.com/sjzar/chatlog/internal/model"
 	"github.com/sjzar/chatlog/internal/wechatdb/datasource/dbm"
+	"github.com/sjzar/chatlog/pkg/util"
 )
 
 const (
@@ -188,70 +191,162 @@ func (ds *DataSource) initChatRoomDb() error {
 	return nil
 }
 
-// GetMessages 实现获取消息的方法
-func (ds *DataSource) GetMessages(ctx context.Context, startTime, endTime time.Time, talker string, limit, offset int) ([]*model.Message, error) {
-	// 在 darwinv3 中，每个联系人/群聊的消息存储在单独的表中，表名为 Chat_md5(talker)
-	// 首先需要找到对应的表名
+func (ds *DataSource) GetMessages(ctx context.Context, startTime, endTime time.Time, talker string, sender string, keyword string, limit, offset int) ([]*model.Message, error) {
 	if talker == "" {
 		return nil, errors.ErrTalkerEmpty
 	}
 
-	_talkerMd5Bytes := md5.Sum([]byte(talker))
-	talkerMd5 := hex.EncodeToString(_talkerMd5Bytes[:])
-	dbPath, ok := ds.talkerDBMap[talkerMd5]
-	if !ok {
-		return nil, errors.TalkerNotFound(talker)
+	// 解析talker参数，支持多个talker（以英文逗号分隔）
+	talkers := util.Str2List(talker, ",")
+	if len(talkers) == 0 {
+		return nil, errors.ErrTalkerEmpty
 	}
-	db, err := ds.dbm.OpenDB(dbPath)
-	if err != nil {
-		return nil, err
-	}
-	tableName := fmt.Sprintf("Chat_%s", talkerMd5)
 
-	// 构建查询条件
-	query := fmt.Sprintf(`
-		SELECT msgCreateTime, msgContent, messageType, mesDes
-		FROM %s 
-		WHERE msgCreateTime >= ? AND msgCreateTime <= ? 
-		ORDER BY msgCreateTime ASC
-	`, tableName)
+	// 解析sender参数，支持多个发送者（以英文逗号分隔）
+	senders := util.Str2List(sender, ",")
 
-	if limit > 0 {
-		query += fmt.Sprintf(" LIMIT %d", limit)
-
-		if offset > 0 {
-			query += fmt.Sprintf(" OFFSET %d", offset)
+	// 预编译正则表达式（如果有keyword）
+	var regex *regexp.Regexp
+	if keyword != "" {
+		var err error
+		regex, err = regexp.Compile(keyword)
+		if err != nil {
+			return nil, errors.QueryFailed("invalid regex pattern", err)
 		}
 	}
 
-	// 执行查询
-	rows, err := db.QueryContext(ctx, query, startTime.Unix(), endTime.Unix())
-	if err != nil {
-		return nil, errors.QueryFailed(query, err)
-	}
-	defer rows.Close()
+	// 从每个相关数据库中查询消息，并在读取时进行过滤
+	filteredMessages := []*model.Message{}
 
-	// 处理查询结果
-	messages := []*model.Message{}
-	for rows.Next() {
-		var msg model.MessageDarwinV3
-		err := rows.Scan(
-			&msg.MsgCreateTime,
-			&msg.MsgContent,
-			&msg.MessageType,
-			&msg.MesDes,
-		)
-		if err != nil {
-			log.Err(err).Msgf("扫描消息行失败")
+	// 对每个talker进行查询
+	for _, talkerItem := range talkers {
+		// 检查上下文是否已取消
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		// 在 darwinv3 中，需要先找到对应的数据库
+		_talkerMd5Bytes := md5.Sum([]byte(talkerItem))
+		talkerMd5 := hex.EncodeToString(_talkerMd5Bytes[:])
+		dbPath, ok := ds.talkerDBMap[talkerMd5]
+		if !ok {
+			// 如果找不到对应的数据库，跳过此talker
 			continue
 		}
 
-		// 将消息包装为通用模型
-		message := msg.Wrap(talker)
-		messages = append(messages, message)
+		db, err := ds.dbm.OpenDB(dbPath)
+		if err != nil {
+			log.Error().Msgf("数据库 %s 未打开", dbPath)
+			continue
+		}
+
+		tableName := fmt.Sprintf("Chat_%s", talkerMd5)
+
+		// 构建查询条件
+		query := fmt.Sprintf(`
+			SELECT msgCreateTime, msgContent, messageType, mesDes
+			FROM %s 
+			WHERE msgCreateTime >= ? AND msgCreateTime <= ? 
+			ORDER BY msgCreateTime ASC
+		`, tableName)
+
+		// 执行查询
+		rows, err := db.QueryContext(ctx, query, startTime.Unix(), endTime.Unix())
+		if err != nil {
+			// 如果表不存在，跳过此talker
+			if strings.Contains(err.Error(), "no such table") {
+				continue
+			}
+			log.Err(err).Msgf("从数据库 %s 查询消息失败", dbPath)
+			continue
+		}
+
+		// 处理查询结果，在读取时进行过滤
+		for rows.Next() {
+			var msg model.MessageDarwinV3
+			err := rows.Scan(
+				&msg.MsgCreateTime,
+				&msg.MsgContent,
+				&msg.MessageType,
+				&msg.MesDes,
+			)
+			if err != nil {
+				rows.Close()
+				log.Err(err).Msgf("扫描消息行失败")
+				continue
+			}
+
+			// 将消息包装为通用模型
+			message := msg.Wrap(talkerItem)
+
+			// 应用sender过滤
+			if len(senders) > 0 {
+				senderMatch := false
+				for _, s := range senders {
+					if message.Sender == s {
+						senderMatch = true
+						break
+					}
+				}
+				if !senderMatch {
+					continue // 不匹配sender，跳过此消息
+				}
+			}
+
+			// 应用keyword过滤
+			if regex != nil {
+				plainText := message.PlainTextContent()
+				if !regex.MatchString(plainText) {
+					continue // 不匹配keyword，跳过此消息
+				}
+			}
+
+			// 通过所有过滤条件，保留此消息
+			filteredMessages = append(filteredMessages, message)
+
+			// 检查是否已经满足分页处理数量
+			if limit > 0 && len(filteredMessages) >= offset+limit {
+				// 已经获取了足够的消息，可以提前返回
+				rows.Close()
+
+				// 对所有消息按时间排序
+				sort.Slice(filteredMessages, func(i, j int) bool {
+					return filteredMessages[i].Seq < filteredMessages[j].Seq
+				})
+
+				// 处理分页
+				if offset >= len(filteredMessages) {
+					return []*model.Message{}, nil
+				}
+				end := offset + limit
+				if end > len(filteredMessages) {
+					end = len(filteredMessages)
+				}
+				return filteredMessages[offset:end], nil
+			}
+		}
+		rows.Close()
 	}
 
-	return messages, nil
+	// 对所有消息按时间排序
+	// FIXME 不同 talker 需要使用 Time 排序
+	sort.Slice(filteredMessages, func(i, j int) bool {
+		return filteredMessages[i].Time.Before(filteredMessages[j].Time)
+	})
+
+	// 处理分页
+	if limit > 0 {
+		if offset >= len(filteredMessages) {
+			return []*model.Message{}, nil
+		}
+		end := offset + limit
+		if end > len(filteredMessages) {
+			end = len(filteredMessages)
+		}
+		return filteredMessages[offset:end], nil
+	}
+
+	return filteredMessages, nil
 }
 
 // 从表名中提取 talker

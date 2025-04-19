@@ -75,11 +75,13 @@ func (s *Service) NoRoute(c *gin.Context) {
 func (s *Service) GetChatlog(c *gin.Context) {
 
 	q := struct {
-		Time   string `form:"time"`
-		Talker string `form:"talker"`
-		Limit  int    `form:"limit"`
-		Offset int    `form:"offset"`
-		Format string `form:"format"`
+		Time    string `form:"time"`
+		Talker  string `form:"talker"`
+		Sender  string `form:"sender"`
+		Keyword string `form:"keyword"`
+		Limit   int    `form:"limit"`
+		Offset  int    `form:"offset"`
+		Format  string `form:"format"`
 	}{}
 
 	if err := c.BindQuery(&q); err != nil {
@@ -100,7 +102,7 @@ func (s *Service) GetChatlog(c *gin.Context) {
 		q.Offset = 0
 	}
 
-	messages, err := s.db.GetMessages(start, end, q.Talker, q.Limit, q.Offset)
+	messages, err := s.db.GetMessages(start, end, q.Talker, q.Sender, q.Keyword, q.Limit, q.Offset)
 	if err != nil {
 		errors.Err(c, err)
 		return
@@ -119,7 +121,7 @@ func (s *Service) GetChatlog(c *gin.Context) {
 		c.Writer.Flush()
 
 		for _, m := range messages {
-			c.Writer.WriteString(m.PlainText(len(q.Talker) == 0, c.Request.Host))
+			c.Writer.WriteString(m.PlainText(strings.Contains(q.Talker, ","), util.PerfectTimeFormat(start, end), c.Request.Host))
 			c.Writer.WriteString("\n")
 			c.Writer.Flush()
 		}
@@ -129,10 +131,10 @@ func (s *Service) GetChatlog(c *gin.Context) {
 func (s *Service) GetContacts(c *gin.Context) {
 
 	q := struct {
-		Key    string `form:"key"`
-		Limit  int    `form:"limit"`
-		Offset int    `form:"offset"`
-		Format string `form:"format"`
+		Keyword string `form:"keyword"`
+		Limit   int    `form:"limit"`
+		Offset  int    `form:"offset"`
+		Format  string `form:"format"`
 	}{}
 
 	if err := c.BindQuery(&q); err != nil {
@@ -140,7 +142,7 @@ func (s *Service) GetContacts(c *gin.Context) {
 		return
 	}
 
-	list, err := s.db.GetContacts(q.Key, q.Limit, q.Offset)
+	list, err := s.db.GetContacts(q.Keyword, q.Limit, q.Offset)
 	if err != nil {
 		errors.Err(c, err)
 		return
@@ -174,10 +176,10 @@ func (s *Service) GetContacts(c *gin.Context) {
 func (s *Service) GetChatRooms(c *gin.Context) {
 
 	q := struct {
-		Key    string `form:"key"`
-		Limit  int    `form:"limit"`
-		Offset int    `form:"offset"`
-		Format string `form:"format"`
+		Keyword string `form:"keyword"`
+		Limit   int    `form:"limit"`
+		Offset  int    `form:"offset"`
+		Format  string `form:"format"`
 	}{}
 
 	if err := c.BindQuery(&q); err != nil {
@@ -185,7 +187,7 @@ func (s *Service) GetChatRooms(c *gin.Context) {
 		return
 	}
 
-	list, err := s.db.GetChatRooms(q.Key, q.Limit, q.Offset)
+	list, err := s.db.GetChatRooms(q.Keyword, q.Limit, q.Offset)
 	if err != nil {
 		errors.Err(c, err)
 		return
@@ -218,10 +220,10 @@ func (s *Service) GetChatRooms(c *gin.Context) {
 func (s *Service) GetSessions(c *gin.Context) {
 
 	q := struct {
-		Key    string `form:"key"`
-		Limit  int    `form:"limit"`
-		Offset int    `form:"offset"`
-		Format string `form:"format"`
+		Keyword string `form:"keyword"`
+		Limit   int    `form:"limit"`
+		Offset  int    `form:"offset"`
+		Format  string `form:"format"`
 	}{}
 
 	if err := c.BindQuery(&q); err != nil {
@@ -229,7 +231,7 @@ func (s *Service) GetSessions(c *gin.Context) {
 		return
 	}
 
-	sessions, err := s.db.GetSessions(q.Key, q.Limit, q.Offset)
+	sessions, err := s.db.GetSessions(q.Keyword, q.Limit, q.Offset)
 	if err != nil {
 		errors.Err(c, err)
 		return
