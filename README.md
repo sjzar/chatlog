@@ -158,8 +158,20 @@ GET /api/v1/chatlog?time=2023-01-01&talker=wxid_xxx
 - **联系人列表**：`GET /api/v1/contact`
 - **群聊列表**：`GET /api/v1/chatroom`
 - **会话列表**：`GET /api/v1/session`
-- **多媒体内容**：`GET /api/v1/media?msgid=xxx`
 
+### 多媒体内容
+
+聊天记录中的多媒体内容会通过 HTTP 服务进行提供，可通过以下路径访问：
+
+- **图片内容**：`GET /image/<id>`
+- **视频内容**：`GET /video/<id>`
+- **文件内容**：`GET /file/<id>`
+- **语音内容**：`GET /voice/<id>`
+- **多媒体内容**：`GET /data/<data dir relative path>`
+
+当请求图片、视频、文件内容时，将返回 302 跳转到多媒体内容 URL。  
+当请求语音内容时，将直接返回语音内容，并对原始 SILK 语音做了实时转码 MP3 处理。  
+多媒体内容 URL 地址为基于`数据目录`的相对地址，请求多媒体内容将直接返回对应文件，并针对加密图片做了实时解密处理。
 
 ## MCP 集成
 

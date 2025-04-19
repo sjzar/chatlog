@@ -35,6 +35,7 @@ type Image struct {
 }
 
 type Video struct {
+	Md5    string `xml:"md5,attr"`
 	RawMd5 string `xml:"rawmd5,attr"`
 	// Length            string `xml:"length,attr"`
 	// PlayLength        string `xml:"playlength,attr"`

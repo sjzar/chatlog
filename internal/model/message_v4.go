@@ -2,7 +2,10 @@ package model
 
 import (
 	"bytes"
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -85,10 +88,14 @@ func (m *MessageV4) Wrap(talker string) *Message {
 		if packedInfo := ParsePackedInfo(m.PackedInfoData); packedInfo != nil {
 			// FIXME 尝试解决 v4 版本 xml 数据无法匹配到 hardlink 记录的问题
 			if _m.Type == 3 && packedInfo.Image != nil {
-				_m.Contents["md5"] = packedInfo.Image.Md5
+				_talkerMd5Bytes := md5.Sum([]byte(talker))
+				talkerMd5 := hex.EncodeToString(_talkerMd5Bytes[:])
+				_m.Contents["imgfile"] = filepath.Join("msg", "attach", talkerMd5, _m.Time.Format("2006-01"), "Img", fmt.Sprintf("%s.dat", packedInfo.Image.Md5))
+				_m.Contents["thumb"] = filepath.Join("msg", "attach", talkerMd5, _m.Time.Format("2006-01"), "Img", fmt.Sprintf("%s_t.dat", packedInfo.Image.Md5))
 			}
 			if _m.Type == 43 && packedInfo.Video != nil {
-				_m.Contents["md5"] = packedInfo.Video.Md5
+				_m.Contents["videofile"] = filepath.Join("msg", "video", _m.Time.Format("2006-01"), fmt.Sprintf("%s.mp4", packedInfo.Video.Md5))
+				_m.Contents["thumb"] = filepath.Join("msg", "video", _m.Time.Format("2006-01"), fmt.Sprintf("%s_thumb.jpg", packedInfo.Video.Md5))
 			}
 		}
 	}

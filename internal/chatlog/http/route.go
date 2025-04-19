@@ -32,10 +32,10 @@ func (s *Service) initRouter() {
 	router.StaticFileFS("/", "./index.htm", http.FS(staticDir))
 
 	// Media
-	router.GET("/image/:key", s.GetImage)
-	router.GET("/video/:key", s.GetVideo)
-	router.GET("/file/:key", s.GetFile)
-	router.GET("/voice/:key", s.GetVoice)
+	router.GET("/image/*key", s.GetImage)
+	router.GET("/video/*key", s.GetVideo)
+	router.GET("/file/*key", s.GetFile)
+	router.GET("/voice/*key", s.GetVoice)
 	router.GET("/data/*path", s.GetMediaData)
 
 	// MCP Server
@@ -281,30 +281,51 @@ func (s *Service) GetVoice(c *gin.Context) {
 }
 
 func (s *Service) GetMedia(c *gin.Context, _type string) {
-	key := c.Param("key")
+	key := strings.TrimPrefix(c.Param("key"), "/")
 	if key == "" {
 		errors.Err(c, errors.InvalidArg(key))
 		return
 	}
 
-	media, err := s.db.GetMedia(_type, key)
-	if err != nil {
-		errors.Err(c, err)
+	keys := util.Str2List(key, ",")
+	if len(keys) == 0 {
+		errors.Err(c, errors.InvalidArg(key))
 		return
 	}
 
-	if c.Query("info") != "" {
-		c.JSON(http.StatusOK, media)
+	var _err error
+	for _, k := range keys {
+		if len(k) != 32 {
+			absolutePath := filepath.Join(s.ctx.DataDir, k)
+			if _, err := os.Stat(absolutePath); os.IsNotExist(err) {
+				continue
+			}
+			c.Redirect(http.StatusFound, "/data/"+k)
+			return
+		}
+		media, err := s.db.GetMedia(_type, k)
+		if err != nil {
+			_err = err
+			continue
+		}
+		if c.Query("info") != "" {
+			c.JSON(http.StatusOK, media)
+			return
+		}
+		switch media.Type {
+		case "voice":
+			s.HandleVoice(c, media.Data)
+			return
+		default:
+			c.Redirect(http.StatusFound, "/data/"+media.Path)
+			return
+		}
+	}
+
+	if _err != nil {
+		errors.Err(c, _err)
 		return
 	}
-
-	switch media.Type {
-	case "voice":
-		s.HandleVoice(c, media.Data)
-	default:
-		c.Redirect(http.StatusFound, "/data/"+media.Path)
-	}
-
 }
 
 func (s *Service) GetMediaData(c *gin.Context) {
@@ -353,7 +374,8 @@ func (s *Service) HandleDatFile(c *gin.Context, path string) {
 	case "bmp":
 		c.Data(http.StatusOK, "image/bmp", out)
 	default:
-		c.File(path)
+		c.Data(http.StatusOK, "image/jpg", out)
+		// c.File(path)
 	}
 }
 
