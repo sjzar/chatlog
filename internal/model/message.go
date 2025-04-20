@@ -79,7 +79,12 @@ func (m *Message) ParseMediaInfo(data string) error {
 	case 3:
 		m.Contents["md5"] = msg.Image.MD5
 	case 43:
-		m.Contents["md5"] = msg.Video.RawMd5
+		if msg.Video.Md5 != "" {
+			m.Contents["md5"] = msg.Video.Md5
+		}
+		if msg.Video.RawMd5 != "" {
+			m.Contents["rawmd5"] = msg.Video.RawMd5
+		}
 	case 49:
 		m.SubType = int64(msg.App.Type)
 		switch m.SubType {
@@ -234,7 +239,23 @@ func (m *Message) PlainTextContent() string {
 	case 1:
 		return m.Content
 	case 3:
-		return fmt.Sprintf("![图片](http://%s/image/%s)", m.Contents["host"], m.Contents["md5"])
+		keylist := make([]string, 0)
+		if m.Contents["md5"] != nil {
+			if md5, ok := m.Contents["md5"].(string); ok {
+				keylist = append(keylist, md5)
+			}
+		}
+		if m.Contents["imgfile"] != nil {
+			if imgfile, ok := m.Contents["imgfile"].(string); ok {
+				keylist = append(keylist, imgfile)
+			}
+		}
+		if m.Contents["thumb"] != nil {
+			if thumb, ok := m.Contents["thumb"].(string); ok {
+				keylist = append(keylist, thumb)
+			}
+		}
+		return fmt.Sprintf("![图片](http://%s/image/%s)", m.Contents["host"], strings.Join(keylist, ","))
 	case 34:
 		if voice, ok := m.Contents["voice"]; ok {
 			return fmt.Sprintf("[语音](http://%s/voice/%s)", m.Contents["host"], voice)
@@ -243,10 +264,28 @@ func (m *Message) PlainTextContent() string {
 	case 42:
 		return "[名片]"
 	case 43:
-		if path, ok := m.Contents["path"]; ok {
-			return fmt.Sprintf("![视频](http://%s/data/%s)", m.Contents["host"], path)
+		keylist := make([]string, 0)
+		if m.Contents["md5"] != nil {
+			if md5, ok := m.Contents["md5"].(string); ok {
+				keylist = append(keylist, md5)
+			}
 		}
-		return fmt.Sprintf("![视频](http://%s/video/%s)", m.Contents["host"], m.Contents["md5"])
+		if m.Contents["rawmd5"] != nil {
+			if rawmd5, ok := m.Contents["rawmd5"].(string); ok {
+				keylist = append(keylist, rawmd5)
+			}
+		}
+		if m.Contents["videofile"] != nil {
+			if videofile, ok := m.Contents["videofile"].(string); ok {
+				keylist = append(keylist, videofile)
+			}
+		}
+		if m.Contents["thumb"] != nil {
+			if thumb, ok := m.Contents["thumb"].(string); ok {
+				keylist = append(keylist, thumb)
+			}
+		}
+		return fmt.Sprintf("![视频](http://%s/video/%s)", m.Contents["host"], strings.Join(keylist, ","))
 	case 47:
 		return "[动画表情]"
 	case 49:

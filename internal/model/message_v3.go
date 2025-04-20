@@ -96,7 +96,7 @@ func (m *MessageV3) Wrap() *Message {
 				if len(parts) > 1 {
 					path = strings.Join(parts[1:], "/")
 				}
-				_m.Contents["path"] = path
+				_m.Contents["videofile"] = path
 			}
 		}
 	}

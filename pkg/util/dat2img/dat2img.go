@@ -17,6 +17,7 @@ import (
 // Format defines the header and extension for different image types
 type Format struct {
 	Header []byte
+	AesKey []byte
 	Ext    string
 }
 
@@ -29,10 +30,13 @@ var (
 	BMP     = Format{Header: []byte{0x42, 0x4D}, Ext: "bmp"}
 	Formats = []Format{JPG, PNG, GIF, TIFF, BMP}
 
+	V4Format1 = Format{Header: []byte{0x07, 0x08, 0x56, 0x31}, AesKey: []byte("cfcd208495d565ef")}
+	V4Format2 = Format{Header: []byte{0x07, 0x08, 0x56, 0x32}, AesKey: []byte("0000000000000000")} // FIXME
+	V4Formats = []Format{V4Format1, V4Format2}
+
 	// WeChat v4 related constants
-	V4XorKey    byte = 0x37                           // Default XOR key for WeChat v4 dat files
-	V4DatHeader      = []byte{0x07, 0x08, 0x56, 0x31} // WeChat v4 dat file header
-	JpgTail          = []byte{0xFF, 0xD9}             // JPG file tail marker
+	V4XorKey byte = 0x37               // Default XOR key for WeChat v4 dat files
+	JpgTail       = []byte{0xFF, 0xD9} // JPG file tail marker
 )
 
 // Dat2Image converts WeChat dat file data to image data
@@ -43,8 +47,12 @@ func Dat2Image(data []byte) ([]byte, string, error) {
 	}
 
 	// Check if this is a WeChat v4 dat file
-	if len(data) >= 6 && bytes.Equal(data[:4], V4DatHeader) {
-		return Dat2ImageV4(data)
+	if len(data) >= 6 {
+		for _, format := range V4Formats {
+			if bytes.Equal(data[:4], format.Header) {
+				return Dat2ImageV4(data, format.AesKey)
+			}
+		}
 	}
 
 	// For older WeChat versions, use XOR decryption
@@ -134,7 +142,7 @@ func ScanAndSetXorKey(dirPath string) (byte, error) {
 		}
 
 		// Check if it's a WeChat v4 dat file
-		if len(data) < 6 || !bytes.Equal(data[:4], V4DatHeader) {
+		if len(data) < 6 || (!bytes.Equal(data[:4], V4Format1.Header) && !bytes.Equal(data[:4], V4Format2.Header)) {
 			return nil
 		}
 
@@ -179,13 +187,13 @@ func ScanAndSetXorKey(dirPath string) (byte, error) {
 
 // Dat2ImageV4 processes WeChat v4 dat image files
 // WeChat v4 uses a combination of AES-ECB and XOR encryption
-func Dat2ImageV4(data []byte) ([]byte, string, error) {
+func Dat2ImageV4(data []byte, aeskey []byte) ([]byte, string, error) {
 	if len(data) < 15 {
 		return nil, "", fmt.Errorf("data length is too short for WeChat v4 format: %d", len(data))
 	}
 
 	// Parse dat file header:
-	// - 6 bytes: 0x07085631 (dat file identifier)
+	// - 6 bytes: 0x07085631 or 0x07085632 (dat file identifier)
 	// - 4 bytes: int (little-endian) AES-ECB128 encryption length
 	// - 4 bytes: int (little-endian) XOR encryption length
 	// - 1 byte:  0x01 (unknown)
@@ -206,7 +214,7 @@ func Dat2ImageV4(data []byte) ([]byte, string, error) {
 	}
 
 	// Decrypt AES part
-	aesDecryptedData, err := decryptAESECB(fileData[:aesEncryptLen0], []byte("cfcd208495d565ef"))
+	aesDecryptedData, err := decryptAESECB(fileData[:aesEncryptLen0], aeskey)
 	if err != nil {
 		return nil, "", fmt.Errorf("AES decrypt error: %v", err)
 	}
