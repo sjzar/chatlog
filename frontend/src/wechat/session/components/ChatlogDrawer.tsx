@@ -86,33 +86,41 @@ export function ChatlogDrawer(props: ChatlogDrawerProps) {
   const restoreFocusSourceAttributes = useRestoreFocusSource();
   const [limit, setLimit] = React.useState(10);
   const [offset, setOffset] = React.useState(0);
-  const [time, setTime] = React.useState(currentChatSessionItem?.nTime);
+  const [time, setTime] = React.useState('');
   const [chatlogs, setChatlogs] = React.useState<ChatlogItem[]>([]);
   const { loading, run } = useRequest<GetDataParams, ChatlogItem[]>(params => getChatlog(params!));
 
   React.useEffect(() => {
+    console.log('ChatlogDrawer mounted -> ' + Date.now());
     if (isOpen) {
       setLimit(10);
       setOffset(0);
       setChatlogs([]);
-      setTime(currentChatSessionItem?.nTime ? dayjs(currentChatSessionItem.nTime).format('YYYY-MM-DD') : '');
+      setTime(currentChatSessionItem?.nTime ? dayjs(currentChatSessionItem.nTime).format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD'));
     }
 
-    return () => { };
+    return () => {
+      console.log('ChatlogDrawer unmounted -> ' + Date.now());
+      setTime('');
+      setChatlogs([]);
+    };
   }, [isOpen, currentChatSessionItem]);
 
   React.useEffect(() => {
     if (currentChatSessionItem?.userName) {
-      loadData(currentChatSessionItem.userName, time);
+      loadData();
     }
 
     return () => { };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [limit, offset, time]);
+  }, [limit, offset, time, currentChatSessionItem]);
 
+  const loadData = async () => {
+    if (!time) {
+      return;
+    }
 
-  const loadData = async (talker: string, time: string) => {
-    run({ limit, offset, talker, time })
+    run({ limit, offset, talker: currentChatSessionItem.userName, time })
       .then(data => {
         setChatlogs([...chatlogs, ...data]);
       })
@@ -179,9 +187,6 @@ export function ChatlogDrawer(props: ChatlogDrawerProps) {
       <DrawerFooter>
         <Button appearance="secondary" onClick={() => setIsOpen(false)}>
           Close
-        </Button>
-        <Button appearance="primary" onClick={() => loadData(currentChatSessionItem.userName, time)}>
-          Refresh
         </Button>
         <Button appearance="primary" onClick={() => setOffset(offset + limit)}>
           Load More
