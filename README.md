@@ -1,10 +1,10 @@
 <div align="center">
 
-# Chatlog
+![chatlog](https://github.com/user-attachments/assets/e085d3a2-e009-4463-b2fd-8bd7df2b50c3)
 
-![chatlog](https://socialify.git.ci/sjzar/chatlog/image?font=Rokkitt&forks=1&issues=1&name=1&pattern=Diagonal+Stripes&stargazers=1&theme=Auto)
+_Chatlog 聊天记录工具，帮助大家轻松使用自己的聊天数据_
 
-_聊天记录工具，帮助大家轻松使用自己的聊天数据_
+<a href="https://hellogithub.com/repository/52f788da7521494aa3ae007ea3b01975" target="_blank"><img src="https://api.hellogithub.com/v1/widgets/recommend.svg?rid=52f788da7521494aa3ae007ea3b01975&claim_uid=3w7v6W42Kek8R1H" alt="Featured｜HelloGitHub" /></a>
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/sjzar/chatlog)](https://goreportcard.com/report/github.com/sjzar/chatlog)
 [![GoDoc](https://godoc.org/github.com/sjzar/chatlog?status.svg)](https://godoc.org/github.com/sjzar/chatlog)
@@ -13,9 +13,7 @@ _聊天记录工具，帮助大家轻松使用自己的聊天数据_
 
 </div>
 
-![chatlog](https://github.com/user-attachments/assets/e085d3a2-e009-4463-b2fd-8bd7df2b50c3)
-
-## Feature
+## 特性
 
 - 从本地数据库文件获取聊天数据
 - 支持 Windows / macOS 系统
@@ -26,14 +24,10 @@ _聊天记录工具，帮助大家轻松使用自己的聊天数据_
 - 支持多媒体消息，支持解密图片、语音
 - 支持自动解密数据，简化使用流程
 - 支持多账号管理，可在不同账号间切换
+- [ ] 聊天数据全文索引（开发中）
+- [ ] 聊天数据统计 & Dashboard（开发中）
 
-
-## TODO
-
-- 聊天数据全文索引
-- 聊天数据统计 & Dashboard
-
-## Quick Start
+## 快速开始
 
 ### 基本步骤
 
@@ -229,7 +223,7 @@ Chatlog 可以与多种支持 MCP 的 AI 助手集成，包括：
 
 本项目不收集任何用户数据。所有数据处理均在用户本地设备上进行。使用第三方服务时，请参阅相应服务的隐私政策。
 
-## Thanks
+## 感谢
 
 - [@0xlane](https://github.com/0xlane) 的 [wechat-dump-rs](https://github.com/0xlane/wechat-dump-rs) 项目
 - [@xaoyaoo](https://github.com/xaoyaoo) 的 [PyWxDump](https://github.com/xaoyaoo/PyWxDump) 项目
