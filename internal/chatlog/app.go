@@ -1,12 +1,17 @@
 package chatlog
 
 import (
+	"encoding/csv"
+	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"time"
 
+	"github.com/rs/zerolog/log"
 	"github.com/sjzar/chatlog/internal/chatlog/ctx"
+	"github.com/sjzar/chatlog/internal/model"
 	"github.com/sjzar/chatlog/internal/ui/footer"
 	"github.com/sjzar/chatlog/internal/ui/form"
 	"github.com/sjzar/chatlog/internal/ui/help"
@@ -434,8 +439,347 @@ func (a *App) initMenu() {
 		Selected:    a.settingSelected,
 	}
 
-	selectAccount := &menu.Item{
+	export := &menu.Item{
 		Index:       7,
+		Name:        "导出聊天记录",
+		Description: "导出聊天记录到文件",
+		Selected: func(i *menu.Item) {
+			// 创建一个子菜单
+			subMenu := menu.NewSubMenu("导出聊天记录")
+
+			// 添加导出选项
+			subMenu.AddItem(&menu.Item{
+				Index:       1,
+				Name:        "导出为 JSON",
+				Description: "将聊天记录导出为 JSON 格式",
+				Selected: func(i *menu.Item) {
+					// 显示导出中的模态框
+					modal := tview.NewModal().SetText("正在导出聊天记录...")
+					a.mainPages.AddPage("modal", modal, true, true)
+					a.SetFocus(modal)
+
+					// 在后台执行导出操作
+					go func() {
+						// 获取所有联系人
+						contacts, err := a.m.db.GetContacts("", 0, 0)
+						if err != nil {
+							// 在主线程中更新UI
+							a.QueueUpdateDraw(func() {
+								modal.SetText("导出失败: " + err.Error())
+								modal.AddButtons([]string{"OK"})
+								modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+									a.mainPages.RemovePage("modal")
+								})
+								a.SetFocus(modal)
+							})
+							return
+						}
+
+						// 检查联系人列表是否为空
+						if contacts == nil || len(contacts.Items) == 0 {
+							// 在主线程中更新UI
+							a.QueueUpdateDraw(func() {
+								modal.SetText("导出失败: 未找到任何联系人")
+								modal.AddButtons([]string{"OK"})
+								modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+									a.mainPages.RemovePage("modal")
+								})
+								a.SetFocus(modal)
+							})
+							return
+						}
+
+						// 设置时间范围：从2010年到现在
+						startTime, _ := time.Parse("2006-01-02", "2010-01-01")
+						endTime := time.Now()
+
+						// 获取所有聊天记录
+						var allMessages []*model.Message
+						totalContacts := len(contacts.Items)
+						processedContacts := 0
+
+						// 更新进度显示
+						updateProgress := func() {
+							progress := float64(processedContacts) / float64(totalContacts) * 100
+							a.QueueUpdateDraw(func() {
+								modal.SetText(fmt.Sprintf("正在导出聊天记录...\n进度: %.1f%% (%d/%d)", progress, processedContacts, totalContacts))
+							})
+						}
+
+						// 初始显示进度
+						updateProgress()
+
+						for _, contact := range contacts.Items {
+							// 跳过没有用户名的联系人
+							if contact.UserName == "" {
+								processedContacts++
+								updateProgress()
+								continue
+							}
+
+							// 获取该联系人的聊天记录
+							msgs, err := a.m.db.GetMessages(startTime, endTime, contact.UserName, "", "", 0, 0)
+							if err != nil {
+								// 记录错误但继续处理其他联系人
+								log.Error().Err(err).Str("contact", contact.UserName).Msg("获取聊天记录失败")
+								processedContacts++
+								updateProgress()
+								continue
+							}
+
+							// 如果成功获取到消息，添加到列表中
+							if len(msgs) > 0 {
+								allMessages = append(allMessages, msgs...)
+								log.Info().Str("contact", contact.UserName).Int("count", len(msgs)).Msg("成功获取聊天记录")
+							}
+
+							processedContacts++
+							updateProgress()
+						}
+
+						// 检查是否获取到任何消息
+						if len(allMessages) == 0 {
+							// 在主线程中更新UI
+							a.QueueUpdateDraw(func() {
+								modal.SetText("导出失败: 未找到任何聊天记录")
+								modal.AddButtons([]string{"OK"})
+								modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+									a.mainPages.RemovePage("modal")
+								})
+								a.SetFocus(modal)
+							})
+							return
+						}
+
+						// 导出为JSON
+						outputPath := fmt.Sprintf("chatlog_%s.json", time.Now().Format("20060102_150405"))
+						file, err := os.Create(outputPath)
+						if err != nil {
+							// 在主线程中更新UI
+							a.QueueUpdateDraw(func() {
+								modal.SetText("导出失败: " + err.Error())
+								modal.AddButtons([]string{"OK"})
+								modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+									a.mainPages.RemovePage("modal")
+								})
+								a.SetFocus(modal)
+							})
+							return
+						}
+						defer file.Close()
+
+						encoder := json.NewEncoder(file)
+						encoder.SetIndent("", "  ")
+						if err := encoder.Encode(allMessages); err != nil {
+							// 在主线程中更新UI
+							a.QueueUpdateDraw(func() {
+								modal.SetText("导出失败: " + err.Error())
+								modal.AddButtons([]string{"OK"})
+								modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+									a.mainPages.RemovePage("modal")
+								})
+								a.SetFocus(modal)
+							})
+							return
+						}
+
+						// 在主线程中更新UI
+						a.QueueUpdateDraw(func() {
+							modal.SetText(fmt.Sprintf("导出成功\n文件已保存到: %s", outputPath))
+							modal.AddButtons([]string{"OK"})
+							modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+								a.mainPages.RemovePage("modal")
+							})
+							a.SetFocus(modal)
+						})
+					}()
+				},
+			})
+
+			subMenu.AddItem(&menu.Item{
+				Index:       2,
+				Name:        "导出为 CSV",
+				Description: "将聊天记录导出为 CSV 格式",
+				Selected: func(i *menu.Item) {
+					// 显示导出中的模态框
+					modal := tview.NewModal().SetText("正在导出聊天记录...")
+					a.mainPages.AddPage("modal", modal, true, true)
+					a.SetFocus(modal)
+
+					// 在后台执行导出操作
+					go func() {
+						// 获取所有联系人
+						contacts, err := a.m.db.GetContacts("", 0, 0)
+						if err != nil {
+							// 在主线程中更新UI
+							a.QueueUpdateDraw(func() {
+								modal.SetText("导出失败: " + err.Error())
+								modal.AddButtons([]string{"OK"})
+								modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+									a.mainPages.RemovePage("modal")
+								})
+								a.SetFocus(modal)
+							})
+							return
+						}
+
+						// 检查联系人列表是否为空
+						if contacts == nil || len(contacts.Items) == 0 {
+							// 在主线程中更新UI
+							a.QueueUpdateDraw(func() {
+								modal.SetText("导出失败: 未找到任何联系人")
+								modal.AddButtons([]string{"OK"})
+								modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+									a.mainPages.RemovePage("modal")
+								})
+								a.SetFocus(modal)
+							})
+							return
+						}
+
+						// 设置时间范围：从2010年到现在
+						startTime, _ := time.Parse("2006-01-02", "2010-01-01")
+						endTime := time.Now()
+
+						// 获取所有聊天记录
+						var allMessages []*model.Message
+						totalContacts := len(contacts.Items)
+						processedContacts := 0
+
+						// 更新进度显示
+						updateProgress := func() {
+							progress := float64(processedContacts) / float64(totalContacts) * 100
+							a.QueueUpdateDraw(func() {
+								modal.SetText(fmt.Sprintf("正在导出聊天记录...\n进度: %.1f%% (%d/%d)", progress, processedContacts, totalContacts))
+							})
+						}
+
+						// 初始显示进度
+						updateProgress()
+
+						for _, contact := range contacts.Items {
+							// 跳过没有用户名的联系人
+							if contact.UserName == "" {
+								processedContacts++
+								updateProgress()
+								continue
+							}
+
+							// 获取该联系人的聊天记录
+							msgs, err := a.m.db.GetMessages(startTime, endTime, contact.UserName, "", "", 0, 0)
+							if err != nil {
+								// 记录错误但继续处理其他联系人
+								log.Error().Err(err).Str("contact", contact.UserName).Msg("获取聊天记录失败")
+								processedContacts++
+								updateProgress()
+								continue
+							}
+
+							// 如果成功获取到消息，添加到列表中
+							if len(msgs) > 0 {
+								allMessages = append(allMessages, msgs...)
+								log.Info().Str("contact", contact.UserName).Int("count", len(msgs)).Msg("成功获取聊天记录")
+							}
+
+							processedContacts++
+							updateProgress()
+						}
+
+						// 检查是否获取到任何消息
+						if len(allMessages) == 0 {
+							// 在主线程中更新UI
+							a.QueueUpdateDraw(func() {
+								modal.SetText("导出失败: 未找到任何聊天记录")
+								modal.AddButtons([]string{"OK"})
+								modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+									a.mainPages.RemovePage("modal")
+								})
+								a.SetFocus(modal)
+							})
+							return
+						}
+
+						// 导出为CSV
+						outputPath := fmt.Sprintf("chatlog_%s.csv", time.Now().Format("20060102_150405"))
+						file, err := os.Create(outputPath)
+						if err != nil {
+							// 在主线程中更新UI
+							a.QueueUpdateDraw(func() {
+								modal.SetText("导出失败: " + err.Error())
+								modal.AddButtons([]string{"OK"})
+								modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+									a.mainPages.RemovePage("modal")
+								})
+								a.SetFocus(modal)
+							})
+							return
+						}
+						defer file.Close()
+
+						writer := csv.NewWriter(file)
+						defer writer.Flush()
+
+						// 写入CSV头
+						headers := []string{"Time", "Talker", "TalkerName", "Sender", "SenderName", "IsSelf", "Type", "Content"}
+						if err := writer.Write(headers); err != nil {
+							// 在主线程中更新UI
+							a.QueueUpdateDraw(func() {
+								modal.SetText("导出失败: " + err.Error())
+								modal.AddButtons([]string{"OK"})
+								modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+									a.mainPages.RemovePage("modal")
+								})
+								a.SetFocus(modal)
+							})
+							return
+						}
+
+						// 写入数据
+						for _, msg := range allMessages {
+							record := []string{
+								msg.Time.Format("2006-01-02 15:04:05"),
+								msg.Talker,
+								msg.TalkerName,
+								msg.Sender,
+								msg.SenderName,
+								fmt.Sprintf("%v", msg.IsSelf),
+								fmt.Sprintf("%d", msg.Type),
+								msg.Content,
+							}
+							if err := writer.Write(record); err != nil {
+								// 在主线程中更新UI
+								a.QueueUpdateDraw(func() {
+									modal.SetText("导出失败: " + err.Error())
+									modal.AddButtons([]string{"OK"})
+									modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+										a.mainPages.RemovePage("modal")
+									})
+									a.SetFocus(modal)
+								})
+								return
+							}
+						}
+
+						// 在主线程中更新UI
+						a.QueueUpdateDraw(func() {
+							modal.SetText(fmt.Sprintf("导出成功\n文件已保存到: %s", outputPath))
+							modal.AddButtons([]string{"OK"})
+							modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+								a.mainPages.RemovePage("modal")
+							})
+							a.SetFocus(modal)
+						})
+					}()
+				},
+			})
+
+			a.mainPages.AddPage("submenu", subMenu, true, true)
+			a.SetFocus(subMenu)
+		},
+	}
+
+	selectAccount := &menu.Item{
+		Index:       8,
 		Name:        "切换账号",
 		Description: "切换当前操作的账号，可以选择进程或历史账号",
 		Selected:    a.selectAccountSelected,
@@ -446,10 +790,11 @@ func (a *App) initMenu() {
 	a.menu.AddItem(httpServer)
 	a.menu.AddItem(autoDecrypt)
 	a.menu.AddItem(setting)
+	a.menu.AddItem(export)
 	a.menu.AddItem(selectAccount)
 
 	a.menu.AddItem(&menu.Item{
-		Index:       8,
+		Index:       9,
 		Name:        "退出",
 		Description: "退出程序",
 		Selected: func(i *menu.Item) {
