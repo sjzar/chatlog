@@ -132,6 +132,43 @@ var exportCmd = &cobra.Command{
 	},
 }
 
+// getMessageTypeDesc 将消息类型转换为可读的中文描述
+func getMessageTypeDesc(msg *model.Message) string {
+	switch msg.Type {
+	case 1:
+		return "文本消息"
+	case 3:
+		return "图片消息"
+	case 34:
+		return "语音消息"
+	case 43:
+		return "视频消息"
+	case 49:
+		switch msg.SubType {
+		case 5:
+			return "链接分享"
+		case 6:
+			return "文件"
+		case 19:
+			return "合并转发"
+		case 33, 36:
+			return "小程序"
+		case 51:
+			return "视频号"
+		case 57:
+			return "引用消息"
+		case 62:
+			return "拍一拍"
+		default:
+			return fmt.Sprintf("应用消息(%d)", msg.SubType)
+		}
+	case 10000:
+		return "系统消息"
+	default:
+		return fmt.Sprintf("未知类型(%d)", msg.Type)
+	}
+}
+
 func exportJSON(messages []*model.Message, outputPath string) error {
 	file, err := os.Create(outputPath)
 	if err != nil {
@@ -139,9 +176,45 @@ func exportJSON(messages []*model.Message, outputPath string) error {
 	}
 	defer file.Close()
 
+	// 创建一个新的消息列表，添加类型描述
+	type MessageWithDesc struct {
+		Seq        int64                  `json:"seq"`
+		Time       time.Time              `json:"time"`
+		Talker     string                 `json:"talker"`
+		TalkerName string                 `json:"talkerName"`
+		IsChatRoom bool                   `json:"isChatRoom"`
+		Sender     string                 `json:"sender"`
+		SenderName string                 `json:"senderName"`
+		IsSelf     bool                   `json:"isSelf"`
+		Type       int64                  `json:"type"`
+		SubType    int64                  `json:"subType"`
+		Content    string                 `json:"content"`
+		Contents   map[string]interface{} `json:"contents,omitempty"`
+		TypeDesc   string                 `json:"typeDesc"`
+	}
+
+	messagesWithDesc := make([]MessageWithDesc, len(messages))
+	for i, msg := range messages {
+		messagesWithDesc[i] = MessageWithDesc{
+			Seq:        msg.Seq,
+			Time:       msg.Time,
+			Talker:     msg.Talker,
+			TalkerName: msg.TalkerName,
+			IsChatRoom: msg.IsChatRoom,
+			Sender:     msg.Sender,
+			SenderName: msg.SenderName,
+			IsSelf:     msg.IsSelf,
+			Type:       msg.Type,
+			SubType:    msg.SubType,
+			Content:    msg.Content,
+			Contents:   msg.Contents,
+			TypeDesc:   getMessageTypeDesc(msg),
+		}
+	}
+
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(messages)
+	return encoder.Encode(messagesWithDesc)
 }
 
 func exportCSV(messages []*model.Message, outputPath string) error {
@@ -155,7 +228,7 @@ func exportCSV(messages []*model.Message, outputPath string) error {
 	defer writer.Flush()
 
 	// 写入CSV头
-	headers := []string{"Time", "Talker", "TalkerName", "Sender", "SenderName", "IsSelf", "Type", "Content"}
+	headers := []string{"Time", "Talker", "TalkerName", "Sender", "SenderName", "IsSelf", "Type", "TypeDesc", "Content"}
 	if err := writer.Write(headers); err != nil {
 		return err
 	}
@@ -170,6 +243,7 @@ func exportCSV(messages []*model.Message, outputPath string) error {
 			msg.SenderName,
 			fmt.Sprintf("%v", msg.IsSelf),
 			fmt.Sprintf("%d", msg.Type),
+			getMessageTypeDesc(msg),
 			msg.Content,
 		}
 		if err := writer.Write(record); err != nil {
