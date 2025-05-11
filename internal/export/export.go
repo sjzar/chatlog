@@ -114,41 +114,82 @@ func filterSelfMessages(messages []*model.Message) []*model.Message {
 	return selfMessages
 }
 
-// getMessageTypeDesc 将消息类型转换为可读的中文描述
-func getMessageTypeDesc(msg *model.Message) string {
-	switch msg.Type {
-	case 1:
-		return "文本消息"
-	case 3:
-		return "图片消息"
-	case 34:
-		return "语音消息"
-	case 43:
-		return "视频消息"
-	case 49:
-		switch msg.SubType {
-		case 5:
-			return "链接分享"
-		case 6:
-			return "文件"
-		case 19:
-			return "合并转发"
-		case 33, 36:
-			return "小程序"
-		case 51:
-			return "视频号"
-		case 57:
-			return "引用消息"
-		case 62:
-			return "拍一拍"
-		default:
-			return fmt.Sprintf("应用消息(%d)", msg.SubType)
-		}
-	case 10000:
-		return "系统消息"
-	default:
-		return fmt.Sprintf("未知类型(%d)", msg.Type)
+// MessageType 消息类型常量
+const (
+	TypeText   = 1     // 文本消息
+	TypeImage  = 3     // 图片消息
+	TypeVoice  = 34    // 语音消息
+	TypeVideo  = 43    // 视频消息
+	TypeApp    = 49    // 应用消息
+	TypeSystem = 10000 // 系统消息
+)
+
+// AppMessageSubType 应用消息子类型常量
+const (
+	SubTypeLink     = 5  // 链接分享
+	SubTypeFile     = 6  // 文件
+	SubTypeForward  = 19 // 合并转发
+	SubTypeMiniApp  = 33 // 小程序
+	SubTypeMiniApp2 = 36 // 小程序
+	SubTypeVideo    = 51 // 视频号
+	SubTypeQuote    = 57 // 引用消息
+	SubTypePat      = 62 // 拍一拍
+)
+
+// GetMessageTypeDesc 将消息类型转换为可读的中文描述
+func GetMessageTypeDesc(msg *model.Message) string {
+	// 基础消息类型描述
+	typeDesc := map[int64]string{
+		TypeText:   "文本消息",
+		TypeImage:  "图片消息",
+		TypeVoice:  "语音消息",
+		TypeVideo:  "视频消息",
+		TypeSystem: "系统消息",
 	}
+
+	// 如果是基础消息类型，直接返回描述
+	if desc, ok := typeDesc[msg.Type]; ok {
+		return desc
+	}
+
+	// 如果是应用消息，需要根据子类型返回描述
+	if msg.Type == TypeApp {
+		subTypeDesc := map[int64]string{
+			SubTypeLink:     "链接分享",
+			SubTypeFile:     "文件",
+			SubTypeForward:  "合并转发",
+			SubTypeMiniApp:  "小程序",
+			SubTypeMiniApp2: "小程序",
+			SubTypeVideo:    "视频号",
+			SubTypeQuote:    "引用消息",
+			SubTypePat:      "拍一拍",
+		}
+
+		if desc, ok := subTypeDesc[msg.SubType]; ok {
+			return desc
+		}
+		return fmt.Sprintf("应用消息(%d)", msg.SubType)
+	}
+
+	// 未知消息类型
+	return fmt.Sprintf("未知类型(%d)", msg.Type)
+}
+
+// MessageWithDesc 带描述的消息结构
+type MessageWithDesc struct {
+	Seq        int64                  `json:"seq"`
+	Time       time.Time              `json:"time"`
+	Talker     string                 `json:"talker"`
+	TalkerName string                 `json:"talkerName"`
+	IsChatRoom bool                   `json:"isChatRoom"`
+	Sender     string                 `json:"sender"`
+	SenderName string                 `json:"senderName"`
+	IsSelf     bool                   `json:"isSelf"`
+	Type       int64                  `json:"type"`
+	SubType    int64                  `json:"subType"`
+	Content    string                 `json:"content"`
+	Contents   map[string]interface{} `json:"contents,omitempty"`
+	TypeDesc   string                 `json:"typeDesc"`
 }
 
 func exportJSON(messages []*model.Message, outputPath string, progress ProgressCallback) error {
@@ -157,23 +198,6 @@ func exportJSON(messages []*model.Message, outputPath string, progress ProgressC
 		return err
 	}
 	defer file.Close()
-
-	// 创建一个新的消息列表，添加类型描述
-	type MessageWithDesc struct {
-		Seq        int64                  `json:"seq"`
-		Time       time.Time              `json:"time"`
-		Talker     string                 `json:"talker"`
-		TalkerName string                 `json:"talkerName"`
-		IsChatRoom bool                   `json:"isChatRoom"`
-		Sender     string                 `json:"sender"`
-		SenderName string                 `json:"senderName"`
-		IsSelf     bool                   `json:"isSelf"`
-		Type       int64                  `json:"type"`
-		SubType    int64                  `json:"subType"`
-		Content    string                 `json:"content"`
-		Contents   map[string]interface{} `json:"contents,omitempty"`
-		TypeDesc   string                 `json:"typeDesc"`
-	}
 
 	total := len(messages)
 	messagesWithDesc := make([]MessageWithDesc, total)
@@ -196,7 +220,7 @@ func exportJSON(messages []*model.Message, outputPath string, progress ProgressC
 			SubType:    msg.SubType,
 			Content:    msg.Content,
 			Contents:   msg.Contents,
-			TypeDesc:   getMessageTypeDesc(msg),
+			TypeDesc:   GetMessageTypeDesc(msg),
 		}
 
 		// 每处理batchSize条消息或距离上次更新超过100ms才更新进度
@@ -247,7 +271,7 @@ func exportCSV(messages []*model.Message, outputPath string, progress ProgressCa
 			msg.SenderName,
 			fmt.Sprintf("%v", msg.IsSelf),
 			fmt.Sprintf("%d", msg.Type),
-			getMessageTypeDesc(msg),
+			GetMessageTypeDesc(msg),
 			msg.Content,
 		}
 		if err := writer.Write(record); err != nil {
