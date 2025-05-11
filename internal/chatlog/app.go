@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/sjzar/chatlog/internal/chatlog/ctx"
+	"github.com/sjzar/chatlog/internal/export"
 	"github.com/sjzar/chatlog/internal/ui/footer"
 	"github.com/sjzar/chatlog/internal/ui/form"
 	"github.com/sjzar/chatlog/internal/ui/help"
@@ -434,8 +436,393 @@ func (a *App) initMenu() {
 		Selected:    a.settingSelected,
 	}
 
-	selectAccount := &menu.Item{
+	export := &menu.Item{
 		Index:       7,
+		Name:        "导出聊天记录",
+		Description: "导出聊天记录到文件",
+		Selected: func(i *menu.Item) {
+			// 创建一个子菜单
+			subMenu := menu.NewSubMenu("导出聊天记录")
+
+			// 添加导出选项
+			subMenu.AddItem(&menu.Item{
+				Index:       1,
+				Name:        "导出为 JSON",
+				Description: "将聊天记录导出为 JSON 格式",
+				Selected: func(i *menu.Item) {
+					// 显示导出中的模态框
+					modal := tview.NewModal().SetText("正在导出聊天记录...")
+					a.mainPages.AddPage("modal", modal, true, true)
+					a.SetFocus(modal)
+
+					// 在后台执行导出操作
+					go func() {
+						// 获取所有消息
+						messages, err := export.GetMessagesForExport(a.m.db, time.Time{}, time.Time{}, "", false, func(current, total int) {
+							percentage := float64(current) / float64(total) * 100
+							width := 20 // 进度条宽度
+							completed := int(float64(width) * float64(current) / float64(total))
+							remaining := width - completed
+
+							// 构建进度条
+							progressBar := fmt.Sprintf("正在导出聊天记录\n\n正在获取消息列表...\n[%s%s] %.1f%%\n(%d/%d)",
+								strings.Repeat("█", completed),
+								strings.Repeat("░", remaining),
+								percentage,
+								current,
+								total)
+
+							a.QueueUpdateDraw(func() {
+								modal.SetText(progressBar)
+							})
+						})
+						if err != nil {
+							// 在主线程中更新UI
+							a.QueueUpdateDraw(func() {
+								modal.SetText("导出失败: " + err.Error())
+								modal.AddButtons([]string{"OK"})
+								modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+									a.mainPages.RemovePage("modal")
+								})
+								a.SetFocus(modal)
+							})
+							return
+						}
+
+						// 导出为JSON
+						outputPath := fmt.Sprintf("chatlog_%s.json", time.Now().Format("20060102_150405"))
+						if err := export.ExportMessages(messages, outputPath, "json", func(current, total int) {
+							percentage := float64(current) / float64(total) * 100
+							width := 20 // 进度条宽度
+							completed := int(float64(width) * float64(current) / float64(total))
+							remaining := width - completed
+
+							// 构建进度条
+							progressBar := fmt.Sprintf("正在导出聊天记录\n\n正在写入文件...\n[%s%s] %.1f%%\n(%d/%d)",
+								strings.Repeat("█", completed),
+								strings.Repeat("░", remaining),
+								percentage,
+								current,
+								total)
+
+							a.QueueUpdateDraw(func() {
+								modal.SetText(progressBar)
+							})
+						}); err != nil {
+							// 在主线程中更新UI
+							a.QueueUpdateDraw(func() {
+								modal.SetText("导出失败: " + err.Error())
+								modal.AddButtons([]string{"OK"})
+								modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+									a.mainPages.RemovePage("modal")
+								})
+								a.SetFocus(modal)
+							})
+							return
+						}
+
+						// 在主线程中更新UI
+						a.QueueUpdateDraw(func() {
+							modal.SetText(fmt.Sprintf("导出成功\n文件已保存到: %s", outputPath))
+							modal.AddButtons([]string{"OK"})
+							modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+								a.mainPages.RemovePage("modal")
+							})
+							a.SetFocus(modal)
+						})
+					}()
+				},
+			})
+
+			subMenu.AddItem(&menu.Item{
+				Index:       2,
+				Name:        "导出为 CSV",
+				Description: "将聊天记录导出为 CSV 格式",
+				Selected: func(i *menu.Item) {
+					// 显示导出中的模态框
+					modal := tview.NewModal().SetText("正在导出聊天记录...")
+					a.mainPages.AddPage("modal", modal, true, true)
+					a.SetFocus(modal)
+
+					// 在后台执行导出操作
+					go func() {
+						// 获取所有消息
+						messages, err := export.GetMessagesForExport(a.m.db, time.Time{}, time.Time{}, "", false, func(current, total int) {
+							percentage := float64(current) / float64(total) * 100
+							width := 20 // 进度条宽度
+							completed := int(float64(width) * float64(current) / float64(total))
+							remaining := width - completed
+
+							// 构建进度条
+							progressBar := fmt.Sprintf("正在导出聊天记录\n\n正在获取消息列表...\n[%s%s] %.1f%%\n(%d/%d)",
+								strings.Repeat("█", completed),
+								strings.Repeat("░", remaining),
+								percentage,
+								current,
+								total)
+
+							a.QueueUpdateDraw(func() {
+								modal.SetText(progressBar)
+							})
+						})
+						if err != nil {
+							// 在主线程中更新UI
+							a.QueueUpdateDraw(func() {
+								modal.SetText("导出失败: " + err.Error())
+								modal.AddButtons([]string{"OK"})
+								modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+									a.mainPages.RemovePage("modal")
+								})
+								a.SetFocus(modal)
+							})
+							return
+						}
+
+						// 导出为CSV
+						outputPath := fmt.Sprintf("chatlog_%s.csv", time.Now().Format("20060102_150405"))
+						if err := export.ExportMessages(messages, outputPath, "csv", func(current, total int) {
+							percentage := float64(current) / float64(total) * 100
+							width := 20 // 进度条宽度
+							completed := int(float64(width) * float64(current) / float64(total))
+							remaining := width - completed
+
+							// 构建进度条
+							progressBar := fmt.Sprintf("正在导出聊天记录\n\n[%s%s] %.1f%%\n(%d/%d)",
+								strings.Repeat("█", completed),
+								strings.Repeat("░", remaining),
+								percentage,
+								current,
+								total)
+
+							a.QueueUpdateDraw(func() {
+								modal.SetText(progressBar)
+							})
+						}); err != nil {
+							// 在主线程中更新UI
+							a.QueueUpdateDraw(func() {
+								modal.SetText("导出失败: " + err.Error())
+								modal.AddButtons([]string{"OK"})
+								modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+									a.mainPages.RemovePage("modal")
+								})
+								a.SetFocus(modal)
+							})
+							return
+						}
+
+						// 在主线程中更新UI
+						a.QueueUpdateDraw(func() {
+							modal.SetText(fmt.Sprintf("导出成功\n文件已保存到: %s", outputPath))
+							modal.AddButtons([]string{"OK"})
+							modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+								a.mainPages.RemovePage("modal")
+							})
+							a.SetFocus(modal)
+						})
+					}()
+				},
+			})
+
+			subMenu.AddItem(&menu.Item{
+				Index:       3,
+				Name:        "导出我的发言",
+				Description: "导出当前账号的所有发言记录",
+				Selected: func(i *menu.Item) {
+					// 创建格式选择子菜单
+					formatMenu := menu.NewSubMenu("选择导出格式")
+
+					// 添加 JSON 格式选项
+					formatMenu.AddItem(&menu.Item{
+						Index:       1,
+						Name:        "导出为 JSON",
+						Description: "将发言记录导出为 JSON 格式",
+						Selected: func(i *menu.Item) {
+							// 显示导出中的模态框
+							modal := tview.NewModal().SetText("正在导出聊天记录...")
+							a.mainPages.AddPage("modal", modal, true, true)
+							a.SetFocus(modal)
+
+							// 在后台执行导出操作
+							go func() {
+								// 获取所有消息
+								messages, err := export.GetMessagesForExport(a.m.db, time.Time{}, time.Time{}, "", true, func(current, total int) {
+									percentage := float64(current) / float64(total) * 100
+									width := 20 // 进度条宽度
+									completed := int(float64(width) * float64(current) / float64(total))
+									remaining := width - completed
+
+									// 构建进度条
+									progressBar := fmt.Sprintf("正在导出聊天记录\n\n正在获取消息列表...\n[%s%s] %.1f%%\n(%d/%d)",
+										strings.Repeat("█", completed),
+										strings.Repeat("░", remaining),
+										percentage,
+										current,
+										total)
+
+									a.QueueUpdateDraw(func() {
+										modal.SetText(progressBar)
+									})
+								})
+								if err != nil {
+									// 在主线程中更新UI
+									a.QueueUpdateDraw(func() {
+										modal.SetText("导出失败: " + err.Error())
+										modal.AddButtons([]string{"OK"})
+										modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+											a.mainPages.RemovePage("modal")
+										})
+										a.SetFocus(modal)
+									})
+									return
+								}
+
+								// 导出为JSON
+								outputPath := fmt.Sprintf("my_chatlog_%s.json", time.Now().Format("20060102_150405"))
+								if err := export.ExportMessages(messages, outputPath, "json", func(current, total int) {
+									percentage := float64(current) / float64(total) * 100
+									width := 20 // 进度条宽度
+									completed := int(float64(width) * float64(current) / float64(total))
+									remaining := width - completed
+
+									// 构建进度条
+									progressBar := fmt.Sprintf("正在导出聊天记录\n\n[%s%s] %.1f%%\n(%d/%d)",
+										strings.Repeat("█", completed),
+										strings.Repeat("░", remaining),
+										percentage,
+										current,
+										total)
+
+									a.QueueUpdateDraw(func() {
+										modal.SetText(progressBar)
+									})
+								}); err != nil {
+									// 在主线程中更新UI
+									a.QueueUpdateDraw(func() {
+										modal.SetText("导出失败: " + err.Error())
+										modal.AddButtons([]string{"OK"})
+										modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+											a.mainPages.RemovePage("modal")
+										})
+										a.SetFocus(modal)
+									})
+									return
+								}
+
+								// 在主线程中更新UI
+								a.QueueUpdateDraw(func() {
+									modal.SetText(fmt.Sprintf("导出成功\n文件已保存到: %s", outputPath))
+									modal.AddButtons([]string{"OK"})
+									modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+										a.mainPages.RemovePage("modal")
+									})
+									a.SetFocus(modal)
+								})
+							}()
+						},
+					})
+
+					// 添加 CSV 格式选项
+					formatMenu.AddItem(&menu.Item{
+						Index:       2,
+						Name:        "导出为 CSV",
+						Description: "将发言记录导出为 CSV 格式",
+						Selected: func(i *menu.Item) {
+							// 显示导出中的模态框
+							modal := tview.NewModal().SetText("正在导出聊天记录...")
+							a.mainPages.AddPage("modal", modal, true, true)
+							a.SetFocus(modal)
+
+							// 在后台执行导出操作
+							go func() {
+								// 获取所有消息
+								messages, err := export.GetMessagesForExport(a.m.db, time.Time{}, time.Time{}, "", true, func(current, total int) {
+									percentage := float64(current) / float64(total) * 100
+									width := 20 // 进度条宽度
+									completed := int(float64(width) * float64(current) / float64(total))
+									remaining := width - completed
+
+									// 构建进度条
+									progressBar := fmt.Sprintf("正在导出聊天记录\n\n正在获取消息列表...\n[%s%s] %.1f%%\n(%d/%d)",
+										strings.Repeat("█", completed),
+										strings.Repeat("░", remaining),
+										percentage,
+										current,
+										total)
+
+									a.QueueUpdateDraw(func() {
+										modal.SetText(progressBar)
+									})
+								})
+								if err != nil {
+									// 在主线程中更新UI
+									a.QueueUpdateDraw(func() {
+										modal.SetText("导出失败: " + err.Error())
+										modal.AddButtons([]string{"OK"})
+										modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+											a.mainPages.RemovePage("modal")
+										})
+										a.SetFocus(modal)
+									})
+									return
+								}
+
+								// 导出为CSV
+								outputPath := fmt.Sprintf("my_chatlog_%s.csv", time.Now().Format("20060102_150405"))
+								if err := export.ExportMessages(messages, outputPath, "csv", func(current, total int) {
+									percentage := float64(current) / float64(total) * 100
+									width := 20 // 进度条宽度
+									completed := int(float64(width) * float64(current) / float64(total))
+									remaining := width - completed
+
+									// 构建进度条
+									progressBar := fmt.Sprintf("正在导出聊天记录\n\n[%s%s] %.1f%%\n(%d/%d)",
+										strings.Repeat("█", completed),
+										strings.Repeat("░", remaining),
+										percentage,
+										current,
+										total)
+
+									a.QueueUpdateDraw(func() {
+										modal.SetText(progressBar)
+									})
+								}); err != nil {
+									// 在主线程中更新UI
+									a.QueueUpdateDraw(func() {
+										modal.SetText("导出失败: " + err.Error())
+										modal.AddButtons([]string{"OK"})
+										modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+											a.mainPages.RemovePage("modal")
+										})
+										a.SetFocus(modal)
+									})
+									return
+								}
+
+								// 在主线程中更新UI
+								a.QueueUpdateDraw(func() {
+									modal.SetText(fmt.Sprintf("导出成功\n文件已保存到: %s", outputPath))
+									modal.AddButtons([]string{"OK"})
+									modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+										a.mainPages.RemovePage("modal")
+									})
+									a.SetFocus(modal)
+								})
+							}()
+						},
+					})
+
+					a.mainPages.AddPage("submenu2", formatMenu, true, true)
+					a.SetFocus(formatMenu)
+				},
+			})
+
+			a.mainPages.AddPage("submenu", subMenu, true, true)
+			a.SetFocus(subMenu)
+		},
+	}
+
+	selectAccount := &menu.Item{
+		Index:       8,
 		Name:        "切换账号",
 		Description: "切换当前操作的账号，可以选择进程或历史账号",
 		Selected:    a.selectAccountSelected,
@@ -446,10 +833,11 @@ func (a *App) initMenu() {
 	a.menu.AddItem(httpServer)
 	a.menu.AddItem(autoDecrypt)
 	a.menu.AddItem(setting)
+	a.menu.AddItem(export)
 	a.menu.AddItem(selectAccount)
 
 	a.menu.AddItem(&menu.Item{
-		Index:       8,
+		Index:       9,
 		Name:        "退出",
 		Description: "退出程序",
 		Selected: func(i *menu.Item) {

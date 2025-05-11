@@ -347,3 +347,8 @@ func (m *Manager) CommandHTTPServer(addr string, dataDir string, workDir string,
 
 	return m.http.ListenAndServe()
 }
+
+// Context 返回 Manager 的上下文
+func (m *Manager) Context() *ctx.Context {
+	return m.ctx
+}
