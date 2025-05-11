@@ -1,16 +1,13 @@
 package chatlog
 
 import (
-	"encoding/csv"
-	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/sjzar/chatlog/internal/chatlog"
-	"github.com/sjzar/chatlog/internal/model"
+	"github.com/sjzar/chatlog/internal/export"
 	"github.com/sjzar/chatlog/pkg/util"
 
 	"github.com/rs/zerolog/log"
@@ -100,7 +97,27 @@ var exportCmd = &cobra.Command{
 		defer db.Stop()
 
 		// 获取聊天记录
-		messages, err := db.GetMessages(startTime, endTime, exportTalker, "", "", 0, 0)
+		fmt.Println("正在导出聊天记录")
+		fmt.Println("正在获取消息列表...")
+		messages, err := export.GetMessagesForExport(db, startTime, endTime, exportTalker, false, func(current, total int) {
+			percentage := float64(current) / float64(total) * 100
+			width := 30 // 进度条宽度
+			completed := int(float64(width) * float64(current) / float64(total))
+			remaining := width - completed
+
+			// 构建进度条
+			progressBar := fmt.Sprintf("\r获取消息: [%s%s] %.1f%% (%d/%d)",
+				strings.Repeat("=", completed),
+				strings.Repeat("-", remaining),
+				percentage,
+				current,
+				total)
+
+			fmt.Print(progressBar)
+			if current == total {
+				fmt.Println() // 完成后换行
+			}
+		})
 		if err != nil {
 			log.Err(err).Msg("failed to get messages")
 			return
@@ -111,145 +128,31 @@ var exportCmd = &cobra.Command{
 			exportOutput = fmt.Sprintf("chatlog_%s.%s", time.Now().Format("20060102_150405"), exportFormat)
 		}
 
-		// 根据格式导出
-		switch exportFormat {
-		case "json":
-			if err := exportJSON(messages, exportOutput); err != nil {
-				log.Err(err).Msg("failed to export JSON")
-				return
+		// 导出消息
+		fmt.Println("正在写入文件...")
+		if err := export.ExportMessages(messages, exportOutput, exportFormat, func(current, total int) {
+			percentage := float64(current) / float64(total) * 100
+			width := 30 // 进度条宽度
+			completed := int(float64(width) * float64(current) / float64(total))
+			remaining := width - completed
+
+			// 构建进度条
+			progressBar := fmt.Sprintf("\r写入文件: [%s%s] %.1f%% (%d/%d)",
+				strings.Repeat("=", completed),
+				strings.Repeat("-", remaining),
+				percentage,
+				current,
+				total)
+
+			fmt.Print(progressBar)
+			if current == total {
+				fmt.Println() // 完成后换行
 			}
-		case "csv":
-			if err := exportCSV(messages, exportOutput); err != nil {
-				log.Err(err).Msg("failed to export CSV")
-				return
-			}
-		default:
-			log.Error().Msg("unsupported format")
+		}); err != nil {
+			log.Err(err).Msg("failed to export messages")
 			return
 		}
 
 		fmt.Printf("Successfully exported chat logs to %s\n", exportOutput)
 	},
-}
-
-// getMessageTypeDesc 将消息类型转换为可读的中文描述
-func getMessageTypeDesc(msg *model.Message) string {
-	switch msg.Type {
-	case 1:
-		return "文本消息"
-	case 3:
-		return "图片消息"
-	case 34:
-		return "语音消息"
-	case 43:
-		return "视频消息"
-	case 49:
-		switch msg.SubType {
-		case 5:
-			return "链接分享"
-		case 6:
-			return "文件"
-		case 19:
-			return "合并转发"
-		case 33, 36:
-			return "小程序"
-		case 51:
-			return "视频号"
-		case 57:
-			return "引用消息"
-		case 62:
-			return "拍一拍"
-		default:
-			return fmt.Sprintf("应用消息(%d)", msg.SubType)
-		}
-	case 10000:
-		return "系统消息"
-	default:
-		return fmt.Sprintf("未知类型(%d)", msg.Type)
-	}
-}
-
-func exportJSON(messages []*model.Message, outputPath string) error {
-	file, err := os.Create(outputPath)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	// 创建一个新的消息列表，添加类型描述
-	type MessageWithDesc struct {
-		Seq        int64                  `json:"seq"`
-		Time       time.Time              `json:"time"`
-		Talker     string                 `json:"talker"`
-		TalkerName string                 `json:"talkerName"`
-		IsChatRoom bool                   `json:"isChatRoom"`
-		Sender     string                 `json:"sender"`
-		SenderName string                 `json:"senderName"`
-		IsSelf     bool                   `json:"isSelf"`
-		Type       int64                  `json:"type"`
-		SubType    int64                  `json:"subType"`
-		Content    string                 `json:"content"`
-		Contents   map[string]interface{} `json:"contents,omitempty"`
-		TypeDesc   string                 `json:"typeDesc"`
-	}
-
-	messagesWithDesc := make([]MessageWithDesc, len(messages))
-	for i, msg := range messages {
-		messagesWithDesc[i] = MessageWithDesc{
-			Seq:        msg.Seq,
-			Time:       msg.Time,
-			Talker:     msg.Talker,
-			TalkerName: msg.TalkerName,
-			IsChatRoom: msg.IsChatRoom,
-			Sender:     msg.Sender,
-			SenderName: msg.SenderName,
-			IsSelf:     msg.IsSelf,
-			Type:       msg.Type,
-			SubType:    msg.SubType,
-			Content:    msg.Content,
-			Contents:   msg.Contents,
-			TypeDesc:   getMessageTypeDesc(msg),
-		}
-	}
-
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(messagesWithDesc)
-}
-
-func exportCSV(messages []*model.Message, outputPath string) error {
-	file, err := os.Create(outputPath)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	writer := csv.NewWriter(file)
-	defer writer.Flush()
-
-	// 写入CSV头
-	headers := []string{"Time", "Talker", "TalkerName", "Sender", "SenderName", "IsSelf", "Type", "TypeDesc", "Content"}
-	if err := writer.Write(headers); err != nil {
-		return err
-	}
-
-	// 写入数据
-	for _, msg := range messages {
-		record := []string{
-			msg.Time.Format("2006-01-02 15:04:05"),
-			msg.Talker,
-			msg.TalkerName,
-			msg.Sender,
-			msg.SenderName,
-			fmt.Sprintf("%v", msg.IsSelf),
-			fmt.Sprintf("%d", msg.Type),
-			getMessageTypeDesc(msg),
-			msg.Content,
-		}
-		if err := writer.Write(record); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }

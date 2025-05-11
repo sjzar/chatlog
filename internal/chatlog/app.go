@@ -1,17 +1,14 @@
 package chatlog
 
 import (
-	"encoding/csv"
-	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
-	"github.com/rs/zerolog/log"
 	"github.com/sjzar/chatlog/internal/chatlog/ctx"
-	"github.com/sjzar/chatlog/internal/model"
+	"github.com/sjzar/chatlog/internal/export"
 	"github.com/sjzar/chatlog/internal/ui/footer"
 	"github.com/sjzar/chatlog/internal/ui/form"
 	"github.com/sjzar/chatlog/internal/ui/help"
@@ -460,88 +457,29 @@ func (a *App) initMenu() {
 
 					// 在后台执行导出操作
 					go func() {
-						// 获取所有联系人
-						contacts, err := a.m.db.GetContacts("", 0, 0)
+						// 获取所有消息
+						messages, err := export.GetMessagesForExport(a.m.db, time.Time{}, time.Time{}, "", false, func(current, total int) {
+							percentage := float64(current) / float64(total) * 100
+							width := 20 // 进度条宽度
+							completed := int(float64(width) * float64(current) / float64(total))
+							remaining := width - completed
+
+							// 构建进度条
+							progressBar := fmt.Sprintf("正在导出聊天记录\n\n正在获取消息列表...\n[%s%s] %.1f%%\n(%d/%d)",
+								strings.Repeat("█", completed),
+								strings.Repeat("░", remaining),
+								percentage,
+								current,
+								total)
+
+							a.QueueUpdateDraw(func() {
+								modal.SetText(progressBar)
+							})
+						})
 						if err != nil {
 							// 在主线程中更新UI
 							a.QueueUpdateDraw(func() {
 								modal.SetText("导出失败: " + err.Error())
-								modal.AddButtons([]string{"OK"})
-								modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-									a.mainPages.RemovePage("modal")
-								})
-								a.SetFocus(modal)
-							})
-							return
-						}
-
-						// 检查联系人列表是否为空
-						if contacts == nil || len(contacts.Items) == 0 {
-							// 在主线程中更新UI
-							a.QueueUpdateDraw(func() {
-								modal.SetText("导出失败: 未找到任何联系人")
-								modal.AddButtons([]string{"OK"})
-								modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-									a.mainPages.RemovePage("modal")
-								})
-								a.SetFocus(modal)
-							})
-							return
-						}
-
-						// 设置时间范围：从2010年到现在
-						startTime, _ := time.Parse("2006-01-02", "2010-01-01")
-						endTime := time.Now()
-
-						// 获取所有聊天记录
-						var allMessages []*model.Message
-						totalContacts := len(contacts.Items)
-						processedContacts := 0
-
-						// 更新进度显示
-						updateProgress := func() {
-							progress := float64(processedContacts) / float64(totalContacts) * 100
-							a.QueueUpdateDraw(func() {
-								modal.SetText(fmt.Sprintf("正在导出聊天记录...\n进度: %.1f%% (%d/%d)", progress, processedContacts, totalContacts))
-							})
-						}
-
-						// 初始显示进度
-						updateProgress()
-
-						for _, contact := range contacts.Items {
-							// 跳过没有用户名的联系人
-							if contact.UserName == "" {
-								processedContacts++
-								updateProgress()
-								continue
-							}
-
-							// 获取该联系人的聊天记录
-							msgs, err := a.m.db.GetMessages(startTime, endTime, contact.UserName, "", "", 0, 0)
-							if err != nil {
-								// 记录错误但继续处理其他联系人
-								log.Error().Err(err).Str("contact", contact.UserName).Msg("获取聊天记录失败")
-								processedContacts++
-								updateProgress()
-								continue
-							}
-
-							// 如果成功获取到消息，添加到列表中
-							if len(msgs) > 0 {
-								allMessages = append(allMessages, msgs...)
-								log.Info().Str("contact", contact.UserName).Int("count", len(msgs)).Msg("成功获取聊天记录")
-							}
-
-							processedContacts++
-							updateProgress()
-						}
-
-						// 检查是否获取到任何消息
-						if len(allMessages) == 0 {
-							// 在主线程中更新UI
-							a.QueueUpdateDraw(func() {
-								modal.SetText("导出失败: 未找到任何聊天记录")
 								modal.AddButtons([]string{"OK"})
 								modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
 									a.mainPages.RemovePage("modal")
@@ -553,24 +491,24 @@ func (a *App) initMenu() {
 
 						// 导出为JSON
 						outputPath := fmt.Sprintf("chatlog_%s.json", time.Now().Format("20060102_150405"))
-						file, err := os.Create(outputPath)
-						if err != nil {
-							// 在主线程中更新UI
-							a.QueueUpdateDraw(func() {
-								modal.SetText("导出失败: " + err.Error())
-								modal.AddButtons([]string{"OK"})
-								modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-									a.mainPages.RemovePage("modal")
-								})
-								a.SetFocus(modal)
-							})
-							return
-						}
-						defer file.Close()
+						if err := export.ExportMessages(messages, outputPath, "json", func(current, total int) {
+							percentage := float64(current) / float64(total) * 100
+							width := 20 // 进度条宽度
+							completed := int(float64(width) * float64(current) / float64(total))
+							remaining := width - completed
 
-						encoder := json.NewEncoder(file)
-						encoder.SetIndent("", "  ")
-						if err := encoder.Encode(allMessages); err != nil {
+							// 构建进度条
+							progressBar := fmt.Sprintf("正在导出聊天记录\n\n正在写入文件...\n[%s%s] %.1f%%\n(%d/%d)",
+								strings.Repeat("█", completed),
+								strings.Repeat("░", remaining),
+								percentage,
+								current,
+								total)
+
+							a.QueueUpdateDraw(func() {
+								modal.SetText(progressBar)
+							})
+						}); err != nil {
 							// 在主线程中更新UI
 							a.QueueUpdateDraw(func() {
 								modal.SetText("导出失败: " + err.Error())
@@ -608,88 +546,29 @@ func (a *App) initMenu() {
 
 					// 在后台执行导出操作
 					go func() {
-						// 获取所有联系人
-						contacts, err := a.m.db.GetContacts("", 0, 0)
+						// 获取所有消息
+						messages, err := export.GetMessagesForExport(a.m.db, time.Time{}, time.Time{}, "", false, func(current, total int) {
+							percentage := float64(current) / float64(total) * 100
+							width := 20 // 进度条宽度
+							completed := int(float64(width) * float64(current) / float64(total))
+							remaining := width - completed
+
+							// 构建进度条
+							progressBar := fmt.Sprintf("正在导出聊天记录\n\n正在获取消息列表...\n[%s%s] %.1f%%\n(%d/%d)",
+								strings.Repeat("█", completed),
+								strings.Repeat("░", remaining),
+								percentage,
+								current,
+								total)
+
+							a.QueueUpdateDraw(func() {
+								modal.SetText(progressBar)
+							})
+						})
 						if err != nil {
 							// 在主线程中更新UI
 							a.QueueUpdateDraw(func() {
 								modal.SetText("导出失败: " + err.Error())
-								modal.AddButtons([]string{"OK"})
-								modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-									a.mainPages.RemovePage("modal")
-								})
-								a.SetFocus(modal)
-							})
-							return
-						}
-
-						// 检查联系人列表是否为空
-						if contacts == nil || len(contacts.Items) == 0 {
-							// 在主线程中更新UI
-							a.QueueUpdateDraw(func() {
-								modal.SetText("导出失败: 未找到任何联系人")
-								modal.AddButtons([]string{"OK"})
-								modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-									a.mainPages.RemovePage("modal")
-								})
-								a.SetFocus(modal)
-							})
-							return
-						}
-
-						// 设置时间范围：从2010年到现在
-						startTime, _ := time.Parse("2006-01-02", "2010-01-01")
-						endTime := time.Now()
-
-						// 获取所有聊天记录
-						var allMessages []*model.Message
-						totalContacts := len(contacts.Items)
-						processedContacts := 0
-
-						// 更新进度显示
-						updateProgress := func() {
-							progress := float64(processedContacts) / float64(totalContacts) * 100
-							a.QueueUpdateDraw(func() {
-								modal.SetText(fmt.Sprintf("正在导出聊天记录...\n进度: %.1f%% (%d/%d)", progress, processedContacts, totalContacts))
-							})
-						}
-
-						// 初始显示进度
-						updateProgress()
-
-						for _, contact := range contacts.Items {
-							// 跳过没有用户名的联系人
-							if contact.UserName == "" {
-								processedContacts++
-								updateProgress()
-								continue
-							}
-
-							// 获取该联系人的聊天记录
-							msgs, err := a.m.db.GetMessages(startTime, endTime, contact.UserName, "", "", 0, 0)
-							if err != nil {
-								// 记录错误但继续处理其他联系人
-								log.Error().Err(err).Str("contact", contact.UserName).Msg("获取聊天记录失败")
-								processedContacts++
-								updateProgress()
-								continue
-							}
-
-							// 如果成功获取到消息，添加到列表中
-							if len(msgs) > 0 {
-								allMessages = append(allMessages, msgs...)
-								log.Info().Str("contact", contact.UserName).Int("count", len(msgs)).Msg("成功获取聊天记录")
-							}
-
-							processedContacts++
-							updateProgress()
-						}
-
-						// 检查是否获取到任何消息
-						if len(allMessages) == 0 {
-							// 在主线程中更新UI
-							a.QueueUpdateDraw(func() {
-								modal.SetText("导出失败: 未找到任何聊天记录")
 								modal.AddButtons([]string{"OK"})
 								modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
 									a.mainPages.RemovePage("modal")
@@ -701,8 +580,24 @@ func (a *App) initMenu() {
 
 						// 导出为CSV
 						outputPath := fmt.Sprintf("chatlog_%s.csv", time.Now().Format("20060102_150405"))
-						file, err := os.Create(outputPath)
-						if err != nil {
+						if err := export.ExportMessages(messages, outputPath, "csv", func(current, total int) {
+							percentage := float64(current) / float64(total) * 100
+							width := 20 // 进度条宽度
+							completed := int(float64(width) * float64(current) / float64(total))
+							remaining := width - completed
+
+							// 构建进度条
+							progressBar := fmt.Sprintf("正在导出聊天记录\n\n[%s%s] %.1f%%\n(%d/%d)",
+								strings.Repeat("█", completed),
+								strings.Repeat("░", remaining),
+								percentage,
+								current,
+								total)
+
+							a.QueueUpdateDraw(func() {
+								modal.SetText(progressBar)
+							})
+						}); err != nil {
 							// 在主线程中更新UI
 							a.QueueUpdateDraw(func() {
 								modal.SetText("导出失败: " + err.Error())
@@ -713,51 +608,6 @@ func (a *App) initMenu() {
 								a.SetFocus(modal)
 							})
 							return
-						}
-						defer file.Close()
-
-						writer := csv.NewWriter(file)
-						defer writer.Flush()
-
-						// 写入CSV头
-						headers := []string{"Time", "Talker", "TalkerName", "Sender", "SenderName", "IsSelf", "Type", "Content"}
-						if err := writer.Write(headers); err != nil {
-							// 在主线程中更新UI
-							a.QueueUpdateDraw(func() {
-								modal.SetText("导出失败: " + err.Error())
-								modal.AddButtons([]string{"OK"})
-								modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-									a.mainPages.RemovePage("modal")
-								})
-								a.SetFocus(modal)
-							})
-							return
-						}
-
-						// 写入数据
-						for _, msg := range allMessages {
-							record := []string{
-								msg.Time.Format("2006-01-02 15:04:05"),
-								msg.Talker,
-								msg.TalkerName,
-								msg.Sender,
-								msg.SenderName,
-								fmt.Sprintf("%v", msg.IsSelf),
-								fmt.Sprintf("%d", msg.Type),
-								msg.Content,
-							}
-							if err := writer.Write(record); err != nil {
-								// 在主线程中更新UI
-								a.QueueUpdateDraw(func() {
-									modal.SetText("导出失败: " + err.Error())
-									modal.AddButtons([]string{"OK"})
-									modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-										a.mainPages.RemovePage("modal")
-									})
-									a.SetFocus(modal)
-								})
-								return
-							}
 						}
 
 						// 在主线程中更新UI
@@ -794,93 +644,29 @@ func (a *App) initMenu() {
 
 							// 在后台执行导出操作
 							go func() {
-								// 获取所有联系人
-								contacts, err := a.m.db.GetContacts("", 0, 0)
+								// 获取所有消息
+								messages, err := export.GetMessagesForExport(a.m.db, time.Time{}, time.Time{}, "", true, func(current, total int) {
+									percentage := float64(current) / float64(total) * 100
+									width := 20 // 进度条宽度
+									completed := int(float64(width) * float64(current) / float64(total))
+									remaining := width - completed
+
+									// 构建进度条
+									progressBar := fmt.Sprintf("正在导出聊天记录\n\n正在获取消息列表...\n[%s%s] %.1f%%\n(%d/%d)",
+										strings.Repeat("█", completed),
+										strings.Repeat("░", remaining),
+										percentage,
+										current,
+										total)
+
+									a.QueueUpdateDraw(func() {
+										modal.SetText(progressBar)
+									})
+								})
 								if err != nil {
 									// 在主线程中更新UI
 									a.QueueUpdateDraw(func() {
 										modal.SetText("导出失败: " + err.Error())
-										modal.AddButtons([]string{"OK"})
-										modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-											a.mainPages.RemovePage("modal")
-										})
-										a.SetFocus(modal)
-									})
-									return
-								}
-
-								// 检查联系人列表是否为空
-								if contacts == nil || len(contacts.Items) == 0 {
-									// 在主线程中更新UI
-									a.QueueUpdateDraw(func() {
-										modal.SetText("导出失败: 未找到任何联系人")
-										modal.AddButtons([]string{"OK"})
-										modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-											a.mainPages.RemovePage("modal")
-										})
-										a.SetFocus(modal)
-									})
-									return
-								}
-
-								// 设置时间范围：从2010年到现在
-								startTime, _ := time.Parse("2006-01-02", "2010-01-01")
-								endTime := time.Now()
-
-								// 获取所有聊天记录
-								var allMessages []*model.Message
-								totalContacts := len(contacts.Items)
-								processedContacts := 0
-
-								// 更新进度显示
-								updateProgress := func() {
-									progress := float64(processedContacts) / float64(totalContacts) * 100
-									a.QueueUpdateDraw(func() {
-										modal.SetText(fmt.Sprintf("正在导出聊天记录...\n进度: %.1f%% (%d/%d)", progress, processedContacts, totalContacts))
-									})
-								}
-
-								// 初始显示进度
-								updateProgress()
-
-								for _, contact := range contacts.Items {
-									// 跳过没有用户名的联系人
-									if contact.UserName == "" {
-										processedContacts++
-										updateProgress()
-										continue
-									}
-
-									// 获取该联系人的聊天记录
-									msgs, err := a.m.db.GetMessages(startTime, endTime, contact.UserName, "", "", 0, 0)
-									if err != nil {
-										// 记录错误但继续处理其他联系人
-										log.Error().Err(err).Str("contact", contact.UserName).Msg("获取聊天记录失败")
-										processedContacts++
-										updateProgress()
-										continue
-									}
-
-									// 只添加自己发送的消息
-									for _, msg := range msgs {
-										if msg.IsSelf {
-											allMessages = append(allMessages, msg)
-										}
-									}
-
-									if len(msgs) > 0 {
-										log.Info().Str("contact", contact.UserName).Int("count", len(msgs)).Msg("成功获取聊天记录")
-									}
-
-									processedContacts++
-									updateProgress()
-								}
-
-								// 检查是否获取到任何消息
-								if len(allMessages) == 0 {
-									// 在主线程中更新UI
-									a.QueueUpdateDraw(func() {
-										modal.SetText("导出失败: 未找到任何发言记录")
 										modal.AddButtons([]string{"OK"})
 										modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
 											a.mainPages.RemovePage("modal")
@@ -892,24 +678,24 @@ func (a *App) initMenu() {
 
 								// 导出为JSON
 								outputPath := fmt.Sprintf("my_chatlog_%s.json", time.Now().Format("20060102_150405"))
-								file, err := os.Create(outputPath)
-								if err != nil {
-									// 在主线程中更新UI
-									a.QueueUpdateDraw(func() {
-										modal.SetText("导出失败: " + err.Error())
-										modal.AddButtons([]string{"OK"})
-										modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-											a.mainPages.RemovePage("modal")
-										})
-										a.SetFocus(modal)
-									})
-									return
-								}
-								defer file.Close()
+								if err := export.ExportMessages(messages, outputPath, "json", func(current, total int) {
+									percentage := float64(current) / float64(total) * 100
+									width := 20 // 进度条宽度
+									completed := int(float64(width) * float64(current) / float64(total))
+									remaining := width - completed
 
-								encoder := json.NewEncoder(file)
-								encoder.SetIndent("", "  ")
-								if err := encoder.Encode(allMessages); err != nil {
+									// 构建进度条
+									progressBar := fmt.Sprintf("正在导出聊天记录\n\n[%s%s] %.1f%%\n(%d/%d)",
+										strings.Repeat("█", completed),
+										strings.Repeat("░", remaining),
+										percentage,
+										current,
+										total)
+
+									a.QueueUpdateDraw(func() {
+										modal.SetText(progressBar)
+									})
+								}); err != nil {
 									// 在主线程中更新UI
 									a.QueueUpdateDraw(func() {
 										modal.SetText("导出失败: " + err.Error())
@@ -948,93 +734,29 @@ func (a *App) initMenu() {
 
 							// 在后台执行导出操作
 							go func() {
-								// 获取所有联系人
-								contacts, err := a.m.db.GetContacts("", 0, 0)
+								// 获取所有消息
+								messages, err := export.GetMessagesForExport(a.m.db, time.Time{}, time.Time{}, "", true, func(current, total int) {
+									percentage := float64(current) / float64(total) * 100
+									width := 20 // 进度条宽度
+									completed := int(float64(width) * float64(current) / float64(total))
+									remaining := width - completed
+
+									// 构建进度条
+									progressBar := fmt.Sprintf("正在导出聊天记录\n\n正在获取消息列表...\n[%s%s] %.1f%%\n(%d/%d)",
+										strings.Repeat("█", completed),
+										strings.Repeat("░", remaining),
+										percentage,
+										current,
+										total)
+
+									a.QueueUpdateDraw(func() {
+										modal.SetText(progressBar)
+									})
+								})
 								if err != nil {
 									// 在主线程中更新UI
 									a.QueueUpdateDraw(func() {
 										modal.SetText("导出失败: " + err.Error())
-										modal.AddButtons([]string{"OK"})
-										modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-											a.mainPages.RemovePage("modal")
-										})
-										a.SetFocus(modal)
-									})
-									return
-								}
-
-								// 检查联系人列表是否为空
-								if contacts == nil || len(contacts.Items) == 0 {
-									// 在主线程中更新UI
-									a.QueueUpdateDraw(func() {
-										modal.SetText("导出失败: 未找到任何联系人")
-										modal.AddButtons([]string{"OK"})
-										modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-											a.mainPages.RemovePage("modal")
-										})
-										a.SetFocus(modal)
-									})
-									return
-								}
-
-								// 设置时间范围：从2010年到现在
-								startTime, _ := time.Parse("2006-01-02", "2010-01-01")
-								endTime := time.Now()
-
-								// 获取所有聊天记录
-								var allMessages []*model.Message
-								totalContacts := len(contacts.Items)
-								processedContacts := 0
-
-								// 更新进度显示
-								updateProgress := func() {
-									progress := float64(processedContacts) / float64(totalContacts) * 100
-									a.QueueUpdateDraw(func() {
-										modal.SetText(fmt.Sprintf("正在导出聊天记录...\n进度: %.1f%% (%d/%d)", progress, processedContacts, totalContacts))
-									})
-								}
-
-								// 初始显示进度
-								updateProgress()
-
-								for _, contact := range contacts.Items {
-									// 跳过没有用户名的联系人
-									if contact.UserName == "" {
-										processedContacts++
-										updateProgress()
-										continue
-									}
-
-									// 获取该联系人的聊天记录
-									msgs, err := a.m.db.GetMessages(startTime, endTime, contact.UserName, "", "", 0, 0)
-									if err != nil {
-										// 记录错误但继续处理其他联系人
-										log.Error().Err(err).Str("contact", contact.UserName).Msg("获取聊天记录失败")
-										processedContacts++
-										updateProgress()
-										continue
-									}
-
-									// 只添加自己发送的消息
-									for _, msg := range msgs {
-										if msg.IsSelf {
-											allMessages = append(allMessages, msg)
-										}
-									}
-
-									if len(msgs) > 0 {
-										log.Info().Str("contact", contact.UserName).Int("count", len(msgs)).Msg("成功获取聊天记录")
-									}
-
-									processedContacts++
-									updateProgress()
-								}
-
-								// 检查是否获取到任何消息
-								if len(allMessages) == 0 {
-									// 在主线程中更新UI
-									a.QueueUpdateDraw(func() {
-										modal.SetText("导出失败: 未找到任何发言记录")
 										modal.AddButtons([]string{"OK"})
 										modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
 											a.mainPages.RemovePage("modal")
@@ -1046,8 +768,24 @@ func (a *App) initMenu() {
 
 								// 导出为CSV
 								outputPath := fmt.Sprintf("my_chatlog_%s.csv", time.Now().Format("20060102_150405"))
-								file, err := os.Create(outputPath)
-								if err != nil {
+								if err := export.ExportMessages(messages, outputPath, "csv", func(current, total int) {
+									percentage := float64(current) / float64(total) * 100
+									width := 20 // 进度条宽度
+									completed := int(float64(width) * float64(current) / float64(total))
+									remaining := width - completed
+
+									// 构建进度条
+									progressBar := fmt.Sprintf("正在导出聊天记录\n\n[%s%s] %.1f%%\n(%d/%d)",
+										strings.Repeat("█", completed),
+										strings.Repeat("░", remaining),
+										percentage,
+										current,
+										total)
+
+									a.QueueUpdateDraw(func() {
+										modal.SetText(progressBar)
+									})
+								}); err != nil {
 									// 在主线程中更新UI
 									a.QueueUpdateDraw(func() {
 										modal.SetText("导出失败: " + err.Error())
@@ -1058,51 +796,6 @@ func (a *App) initMenu() {
 										a.SetFocus(modal)
 									})
 									return
-								}
-								defer file.Close()
-
-								writer := csv.NewWriter(file)
-								defer writer.Flush()
-
-								// 写入CSV头
-								headers := []string{"Time", "Talker", "TalkerName", "Sender", "SenderName", "IsSelf", "Type", "Content"}
-								if err := writer.Write(headers); err != nil {
-									// 在主线程中更新UI
-									a.QueueUpdateDraw(func() {
-										modal.SetText("导出失败: " + err.Error())
-										modal.AddButtons([]string{"OK"})
-										modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-											a.mainPages.RemovePage("modal")
-										})
-										a.SetFocus(modal)
-									})
-									return
-								}
-
-								// 写入数据
-								for _, msg := range allMessages {
-									record := []string{
-										msg.Time.Format("2006-01-02 15:04:05"),
-										msg.Talker,
-										msg.TalkerName,
-										msg.Sender,
-										msg.SenderName,
-										fmt.Sprintf("%v", msg.IsSelf),
-										fmt.Sprintf("%d", msg.Type),
-										msg.Content,
-									}
-									if err := writer.Write(record); err != nil {
-										// 在主线程中更新UI
-										a.QueueUpdateDraw(func() {
-											modal.SetText("导出失败: " + err.Error())
-											modal.AddButtons([]string{"OK"})
-											modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-												a.mainPages.RemovePage("modal")
-											})
-											a.SetFocus(modal)
-										})
-										return
-									}
 								}
 
 								// 在主线程中更新UI
