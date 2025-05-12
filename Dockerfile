@@ -1,19 +1,25 @@
 # 使用 Ubuntu 作为基础镜像（推荐最新 LTS 版本，如 22.04）
 FROM ubuntu:22.04 as buildenv
 
-# 设置环境变量
+
+# 设置环境变量（容器内生效）
 ENV LANG=C.UTF-8 \
     GOPATH=/go \
-    GO_VERSION=1.24.0 \  # 替换为项目所需的 Go 版本（查看 go.mod 确认）
+    GO_VERSION=1.24.0 \
     WORKDIR=/app
 
 # 安装基础工具和依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libc6-dev \
     make \
     gcc \
     git \
     upx \
-    mingw-w64 \  # Windows 交叉编译工具链
+    mingw-w64 \  
+    wget \
+    ca-certificates \
+    tar \
     && rm -rf /var/lib/apt/lists/*
 
 # 安装 Go 语言
@@ -28,7 +34,7 @@ ENV PATH="/usr/local/go/bin:${GOPATH}/bin:${PATH}" \
     GOPROXY=https://goproxy.cn,direct
 
 # 安装 golangci-lint（代码检查工具）
-RUN go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+RUN go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.1.6
 
 # 设置工作目录（代码将挂载到此）
 WORKDIR /app
