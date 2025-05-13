@@ -48,6 +48,8 @@ crossbuild: clean
 		float=$$(echo $$platform | cut -d/ -f3); \
 		output_name=bin/chatlog_$${os}_$${arch}; \
 		[ "$$float" != "" ] && output_name=$$output_name_$$float; \
+		# 👉 仅 Windows 添加 .exe 后缀
+		[ "$$os" = "windows" ] && output_name=$${output_name}.exe; \
 		echo "🔨 Building for $$os/$$arch..."; \
 		echo "🔨 Building for $$output_name..."; \
 		if [ "$$os" = "windows" ]; then \
