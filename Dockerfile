@@ -6,17 +6,22 @@ FROM ubuntu:22.04 as buildenv
 ENV LANG=C.UTF-8 \
     GOPATH=/go \
     GO_VERSION=1.24.0 \
-    WORKDIR=/app
+    WORKDIR=/app \ 
+    CC_FOR_TARGET=x86_64-w64-mingw32-gcc \
+    CGO_CFLAGS="-pthread"
 
 # 安装基础工具和依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    clang \
+    llvm \
     libc6-dev \
     make \
     gcc \
     git \
     upx \
-    mingw-w64 \  
+    mingw-w64 \
+    gcc-aarch64-linux-gnu \
     wget \
     ca-certificates \
     tar \
