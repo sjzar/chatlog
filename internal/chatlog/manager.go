@@ -307,7 +307,7 @@ func (m *Manager) CommandDecrypt(dataDir string, workDir string, key string, pla
 	return nil
 }
 
-func (m *Manager) CommandHTTPServer(addr string, dataDir string, workDir string, platform string, version int) error {
+func (m *Manager) CommandHTTPServer(addr string, dataDir string, workDir string, platform string, version int, dataKey string, autoDecrypt bool) error {
 
 	if addr == "" {
 		addr = "127.0.0.1:5030"
@@ -330,6 +330,7 @@ func (m *Manager) CommandHTTPServer(addr string, dataDir string, workDir string,
 	m.ctx.WorkDir = workDir
 	m.ctx.Platform = platform
 	m.ctx.Version = version
+	m.ctx.DataKey = dataKey
 
 	// 如果是 4.0 版本，更新下 xorkey
 	if m.ctx.Version == 4 && m.ctx.DataDir != "" {
@@ -343,6 +344,15 @@ func (m *Manager) CommandHTTPServer(addr string, dataDir string, workDir string,
 
 	if err := m.mcp.Start(); err != nil {
 		return err
+	}
+
+	// 如果启用自动解密，启动自动解密功能
+	if autoDecrypt {
+		if err := m.StartAutoDecrypt(); err != nil {
+			log.Info().Err(err).Msg("启动自动解密失败，但HTTP服务器将继续运行")
+		} else {
+			log.Info().Msg("自动解密功能已启动")
+		}
 	}
 
 	return m.http.ListenAndServe()
