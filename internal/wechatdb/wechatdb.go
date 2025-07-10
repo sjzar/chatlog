@@ -12,17 +12,19 @@ import (
 )
 
 type DB struct {
-	path     string
+	workDir  string
+	dataDir  string
 	platform string
 	version  int
 	ds       datasource.DataSource
 	repo     *repository.Repository
 }
 
-func New(path string, platform string, version int) (*DB, error) {
+func New(workDir string, dataDir string, platform string, version int) (*DB, error) {
 
 	w := &DB{
-		path:     path,
+		workDir:  workDir,
+		dataDir:  dataDir,
 		platform: platform,
 		version:  version,
 	}
@@ -44,7 +46,7 @@ func (w *DB) Close() error {
 
 func (w *DB) Initialize() error {
 	var err error
-	w.ds, err = datasource.New(w.path, w.platform, w.version)
+	w.ds, err = datasource.New(w.workDir, w.dataDir, w.platform, w.version)
 	if err != nil {
 		return err
 	}
