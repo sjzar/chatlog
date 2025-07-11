@@ -314,6 +314,30 @@ func (s *Service) GetMedia(c *gin.Context, _type string) {
 	for i, k := range keys {
 		log.Debug().Str("type", _type).Int("index", i).Str("current_key", k).Msg("处理当前key")
 
+		// 对于语音消息，直接进行数据库查询，不检查key长度
+		if _type == "voice" {
+			log.Debug().Str("type", _type).Str("key", k).Msg("语音类型，直接进行数据库查询")
+			media, err := s.db.GetMedia(_type, k)
+			if err != nil {
+				log.Error().Err(err).Str("type", _type).Str("key", k).Msg("从数据库获取语音数据失败")
+				_err = err
+				continue
+			}
+
+			log.Info().Str("type", _type).Str("key", k).Str("media_type", media.Type).Int("data_size", len(media.Data)).Msg("成功获取语音数据")
+
+			if c.Query("info") != "" {
+				log.Debug().Str("type", _type).Str("key", k).Msg("返回语音信息JSON")
+				c.JSON(http.StatusOK, media)
+				return
+			}
+
+			log.Debug().Str("key", k).Int("voice_data_size", len(media.Data)).Msg("开始处理语音数据")
+			s.HandleVoice(c, media.Data)
+			return
+		}
+
+		// 对于其他类型的媒体文件，保持原有逻辑
 		if len(k) != 32 {
 			log.Debug().Str("type", _type).Str("key", k).Int("key_length", len(k)).Msg("key长度不是32，尝试作为相对路径处理")
 			absolutePath := filepath.Join(s.ctx.DataDir, k)
