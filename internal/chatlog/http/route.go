@@ -15,6 +15,7 @@ import (
 	"github.com/sjzar/chatlog/pkg/util/silk"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rs/zerolog/log"
 )
 
 // EFS holds embedded file system data for static assets.
@@ -277,55 +278,88 @@ func (s *Service) GetFile(c *gin.Context) {
 	s.GetMedia(c, "file")
 }
 func (s *Service) GetVoice(c *gin.Context) {
+	key := strings.TrimPrefix(c.Param("key"), "/")
+	log.Info().Str("key", key).Msg("开始处理语音消息请求")
+
+	if key == "" {
+		log.Error().Msg("语音消息key为空")
+		errors.Err(c, errors.InvalidArg(key))
+		return
+	}
+
+	log.Debug().Str("key", key).Msg("调用GetMedia获取语音数据")
 	s.GetMedia(c, "voice")
 }
 
 func (s *Service) GetMedia(c *gin.Context, _type string) {
 	key := strings.TrimPrefix(c.Param("key"), "/")
+	log.Info().Str("type", _type).Str("key", key).Msg("开始获取媒体文件")
+
 	if key == "" {
+		log.Error().Str("type", _type).Msg("媒体文件key为空")
 		errors.Err(c, errors.InvalidArg(key))
 		return
 	}
 
 	keys := util.Str2List(key, ",")
 	if len(keys) == 0 {
+		log.Error().Str("type", _type).Str("key", key).Msg("解析key列表失败")
 		errors.Err(c, errors.InvalidArg(key))
 		return
 	}
 
+	log.Debug().Str("type", _type).Int("key_count", len(keys)).Strs("keys", keys).Msg("解析到的key列表")
+
 	var _err error
-	for _, k := range keys {
+	for i, k := range keys {
+		log.Debug().Str("type", _type).Int("index", i).Str("current_key", k).Msg("处理当前key")
+
 		if len(k) != 32 {
+			log.Debug().Str("type", _type).Str("key", k).Int("key_length", len(k)).Msg("key长度不是32，尝试作为相对路径处理")
 			absolutePath := filepath.Join(s.ctx.DataDir, k)
 			if _, err := os.Stat(absolutePath); os.IsNotExist(err) {
+				log.Warn().Str("type", _type).Str("path", absolutePath).Msg("文件路径不存在，继续下一个key")
 				continue
 			}
+			log.Info().Str("type", _type).Str("path", absolutePath).Msg("找到文件，重定向到静态文件")
 			c.Redirect(http.StatusFound, "/data/"+k)
 			return
 		}
+
+		log.Debug().Str("type", _type).Str("key", k).Msg("开始从数据库获取媒体数据")
 		media, err := s.db.GetMedia(_type, k)
 		if err != nil {
+			log.Error().Err(err).Str("type", _type).Str("key", k).Msg("从数据库获取媒体数据失败")
 			_err = err
 			continue
 		}
+
+		log.Info().Str("type", _type).Str("key", k).Str("media_type", media.Type).Int("data_size", len(media.Data)).Msg("成功获取媒体数据")
+
 		if c.Query("info") != "" {
+			log.Debug().Str("type", _type).Str("key", k).Msg("返回媒体信息JSON")
 			c.JSON(http.StatusOK, media)
 			return
 		}
 		switch media.Type {
 		case "voice":
+			log.Debug().Str("key", k).Int("voice_data_size", len(media.Data)).Msg("开始处理语音数据")
 			s.HandleVoice(c, media.Data)
 			return
 		default:
+			log.Debug().Str("type", _type).Str("key", k).Str("path", media.Path).Msg("重定向到媒体文件路径")
 			c.Redirect(http.StatusFound, "/data/"+media.Path)
 			return
 		}
 	}
 
 	if _err != nil {
+		log.Error().Err(_err).Str("type", _type).Strs("keys", keys).Msg("所有key处理完毕，但有错误发生")
 		errors.Err(c, _err)
 		return
 	}
+
+	log.Warn().Str("type", _type).Strs("keys", keys).Msg("所有key处理完毕，但未找到有效数据")
 }
 
 func (s *Service) GetMediaData(c *gin.Context) {
@@ -380,10 +414,22 @@ func (s *Service) HandleDatFile(c *gin.Context, path string) {
 }
 
 func (s *Service) HandleVoice(c *gin.Context, data []byte) {
+	log.Info().Int("input_data_size", len(data)).Msg("开始处理语音数据转换")
+
+	if len(data) == 0 {
+		log.Error().Msg("语音数据为空")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "语音数据为空"})
+		return
+	}
+
+	log.Debug().Int("silk_data_size", len(data)).Msg("开始SILK到MP3转换")
 	out, err := silk.Silk2MP3(data)
 	if err != nil {
+		log.Error().Err(err).Int("silk_data_size", len(data)).Msg("SILK到MP3转换失败，返回原始SILK数据")
 		c.Data(http.StatusOK, "audio/silk", data)
 		return
 	}
+
+	log.Info().Int("input_size", len(data)).Int("output_size", len(out)).Msg("SILK到MP3转换成功")
 	c.Data(http.StatusOK, "audio/mp3", out)
 }
