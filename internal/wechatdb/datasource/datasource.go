@@ -39,11 +39,11 @@ type DataSource interface {
 func New(workDir string, dataDir string, platform string, version int) (DataSource, error) {
 	switch {
 	case platform == "windows" && version == 3:
-		return windowsv3.New(workDir)
+		return windowsv3.New(workDir, dataDir)
 	case platform == "windows" && version == 4:
 		return v4.New(workDir, dataDir)
 	case platform == "darwin" && version == 3:
-		return darwinv3.New(workDir)
+		return darwinv3.New(workDir, dataDir)
 	case platform == "darwin" && version == 4:
 		return v4.New(workDir, dataDir)
 	default:

@@ -291,7 +291,7 @@ func (ds *DataSource) GetMessages(ctx context.Context, startTime, endTime time.T
 				}
 
 				// 将消息转换为标准格式
-				message := msg.Wrap(talkerItem)
+				message := msg.Wrap(talkerItem, ds.dataDir)
 
 				// 应用sender过滤
 				if len(senders) > 0 {
