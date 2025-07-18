@@ -6,8 +6,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -67,20 +65,18 @@ type MessageDBInfo struct {
 }
 
 type DataSource struct {
-	workDir string
-	dataDir string
-	dbm     *dbm.DBManager
+	path string
+	dbm  *dbm.DBManager
 
 	// 消息数据库信息
 	messageInfos []MessageDBInfo
 }
 
-func New(workDir string, dataDir string) (*DataSource, error) {
+func New(path string) (*DataSource, error) {
 
 	ds := &DataSource{
-		workDir:      workDir,
-		dataDir:      dataDir,
-		dbm:          dbm.NewDBManager(workDir),
+		path:         path,
+		dbm:          dbm.NewDBManager(path),
 		messageInfos: make([]MessageDBInfo, 0),
 	}
 
@@ -291,7 +287,7 @@ func (ds *DataSource) GetMessages(ctx context.Context, startTime, endTime time.T
 				}
 
 				// 将消息转换为标准格式
-				message := msg.Wrap(talkerItem, ds.dataDir)
+				message := msg.Wrap(talkerItem)
 
 				// 应用sender过滤
 				if len(senders) > 0 {
@@ -603,177 +599,77 @@ func (ds *DataSource) GetMedia(ctx context.Context, _type string, key string) (*
 		return nil, errors.ErrKeyEmpty
 	}
 
-	// 语音消息特殊处理
-	if _type == "voice" {
-		return ds.GetVoice(ctx, key)
-	}
-
-	// 在微信4.0中，媒体文件存储在DataDir/msg/目录中
-	// 目录结构为：
-	// - 图片：msg/attach/{talkerMd5}/{YYYY-MM}/Img/
-	// - 视频：msg/video/{YYYY-MM}/
-	// - 文件：msg/file/{talkerMd5}/
-	
-	var searchPaths []string
-	
+	var table string
 	switch _type {
 	case "image":
-		// 图片文件路径：msg/attach/{talkerMd5}/{YYYY-MM}/Img/
-		attachPath := filepath.Join(ds.dataDir, "msg", "attach")
-		searchPaths = ds.generateImageSearchPaths(attachPath, key)
+		table = "image_hardlink_info_v3"
 	case "video":
-		// 视频文件路径：msg/video/{YYYY-MM}/
-		videoPath := filepath.Join(ds.dataDir, "msg", "video")
-		searchPaths = ds.generateVideoSearchPaths(videoPath, key)
+		table = "video_hardlink_info_v3"
 	case "file":
-		// 文件路径：msg/file/{talkerMd5}/
-		filePath := filepath.Join(ds.dataDir, "msg", "file")
-		searchPaths = ds.generateFileSearchPaths(filePath, key)
+		table = "file_hardlink_info_v3"
+	case "voice":
+		return ds.GetVoice(ctx, key)
 	default:
-		// 搜索所有类型
-		attachPath := filepath.Join(ds.dataDir, "msg", "attach")
-		videoPath := filepath.Join(ds.dataDir, "msg", "video")
-		filePath := filepath.Join(ds.dataDir, "msg", "file")
-		
-		searchPaths = append(searchPaths, ds.generateImageSearchPaths(attachPath, key)...)
-		searchPaths = append(searchPaths, ds.generateVideoSearchPaths(videoPath, key)...)
-		searchPaths = append(searchPaths, ds.generateFileSearchPaths(filePath, key)...)
+		return nil, errors.MediaTypeUnsupported(_type)
 	}
-	
-	// 在搜索路径中查找媒体文件
-	for _, searchPath := range searchPaths {
-		if mediaPath, found := ds.findMediaFileInPath(searchPath, key); found {
-			// 获取文件信息
-			fileInfo, err := os.Stat(mediaPath)
-			if err != nil {
-				continue
-			}
-			
-			// 计算相对于dataDir的路径
-			relPath, _ := filepath.Rel(ds.dataDir, mediaPath)
-			
-			return &model.Media{
-				Type:       _type,
-				Key:        key,
-				Path:       relPath,
-				Name:       filepath.Base(mediaPath),
-				Size:       fileInfo.Size(),
-				ModifyTime: fileInfo.ModTime().Unix(),
-			}, nil
-		}
-	}
-	
-	return nil, errors.ErrMediaNotFound
-}
 
-// generateImageSearchPaths 生成图片文件的搜索路径
-func (ds *DataSource) generateImageSearchPaths(attachPath, key string) []string {
-	var paths []string
-	
-	// 遍历所有talker目录
-	if entries, err := os.ReadDir(attachPath); err == nil {
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
-			
-			talkerPath := filepath.Join(attachPath, entry.Name())
-			
-			// 遍历时间目录（最近24个月）
-			now := time.Now()
-			for i := 0; i < 24; i++ {
-				date := now.AddDate(0, -i, 0)
-				yearMonth := date.Format("2006-01")
-				
-				imgPath := filepath.Join(talkerPath, yearMonth, "Img")
-				if _, err := os.Stat(imgPath); err == nil {
-					paths = append(paths, imgPath)
-				}
-			}
-		}
-	}
-	
-	return paths
-}
+	query := fmt.Sprintf(`
+	SELECT 
+		f.md5,
+		f.file_name,
+		f.file_size,
+		f.modify_time,
+		IFNULL(d1.username,""),
+		IFNULL(d2.username,"")
+	FROM 
+		%s f
+	LEFT JOIN 
+		dir2id d1 ON d1.rowid = f.dir1
+	LEFT JOIN 
+		dir2id d2 ON d2.rowid = f.dir2
+	`, table)
+	query += " WHERE f.md5 = ? OR f.file_name LIKE ? || '%'"
+	args := []interface{}{key, key}
 
-// generateVideoSearchPaths 生成视频文件的搜索路径
-func (ds *DataSource) generateVideoSearchPaths(videoPath, key string) []string {
-	var paths []string
-	
-	// 遍历时间目录（最近24个月）
-	now := time.Now()
-	for i := 0; i < 24; i++ {
-		date := now.AddDate(0, -i, 0)
-		yearMonth := date.Format("2006-01")
-		
-		timePath := filepath.Join(videoPath, yearMonth)
-		if _, err := os.Stat(timePath); err == nil {
-			paths = append(paths, timePath)
-		}
-	}
-	
-	return paths
-}
-
-// generateFileSearchPaths 生成文件的搜索路径
-func (ds *DataSource) generateFileSearchPaths(filePath, key string) []string {
-	var paths []string
-	
-	// 遍历所有talker目录
-	if entries, err := os.ReadDir(filePath); err == nil {
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
-			
-			talkerPath := filepath.Join(filePath, entry.Name())
-			paths = append(paths, talkerPath)
-		}
-	}
-	
-	return paths
-}
-
-// findMediaFileInPath 在指定路径中查找媒体文件
-func (ds *DataSource) findMediaFileInPath(dirPath, fileID string) (string, bool) {
-	// 检查目录是否存在
-	if _, err := os.Stat(dirPath); os.IsNotExist(err) {
-		return "", false
-	}
-	
-	// 遍历目录中的所有文件
-	entries, err := os.ReadDir(dirPath)
+	// 执行查询
+	db, err := ds.dbm.GetDB(Media)
 	if err != nil {
-		return "", false
+		return nil, err
 	}
-	
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		
-		fileName := entry.Name()
-		
-		// 检查文件名是否包含fileID
-		if strings.Contains(fileName, fileID) {
-			return filepath.Join(dirPath, fileName), true
-		}
-		
-		// 检查文件名去掉扩展名后是否匹配fileID
-		nameWithoutExt := strings.TrimSuffix(fileName, filepath.Ext(fileName))
-		// 对于微信4.0的文件，还需要去掉后缀如 _t_M, _M, _t_W, _W 等
-		nameWithoutExt = strings.TrimSuffix(nameWithoutExt, "_t_M")
-		nameWithoutExt = strings.TrimSuffix(nameWithoutExt, "_M")
-		nameWithoutExt = strings.TrimSuffix(nameWithoutExt, "_t")
-		nameWithoutExt = strings.TrimSuffix(nameWithoutExt, "_t_W")
-		nameWithoutExt = strings.TrimSuffix(nameWithoutExt, "_W")
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, errors.QueryFailed(query, err)
+	}
+	defer rows.Close()
 
-		if nameWithoutExt == fileID || strings.Contains(nameWithoutExt, fileID) {
-			return filepath.Join(dirPath, fileName), true
+	var media *model.Media
+	for rows.Next() {
+		var mediaV4 model.MediaV4
+		err := rows.Scan(
+			&mediaV4.Key,
+			&mediaV4.Name,
+			&mediaV4.Size,
+			&mediaV4.ModifyTime,
+			&mediaV4.Dir1,
+			&mediaV4.Dir2,
+		)
+		if err != nil {
+			return nil, errors.ScanRowFailed(err)
+		}
+		mediaV4.Type = _type
+		media = mediaV4.Wrap()
+
+		// 跳过缩略图
+		if _type == "image" && !strings.Contains(media.Name, "_t") {
+			break
 		}
 	}
-	
-	return "", false
+
+	if media == nil {
+		return nil, errors.ErrMediaNotFound
+	}
+
+	return media, nil
 }
 
 func (ds *DataSource) GetVoice(ctx context.Context, key string) (*model.Media, error) {

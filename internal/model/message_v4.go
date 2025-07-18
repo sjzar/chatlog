@@ -5,11 +5,9 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
-	"runtime"
 
 	"github.com/sjzar/chatlog/internal/model/wxproto"
 	"github.com/sjzar/chatlog/pkg/util/zstd"
@@ -46,7 +44,7 @@ type MessageV4 struct {
 	Status         int    `json:"status"`           // 消息状态，2 是已发送，4 是已接收，可以用于判断 IsSender（FIXME 不准, 需要判断 UserName）
 }
 
-func (m *MessageV4) Wrap(talker string, dataDir string) *Message {
+func (m *MessageV4) Wrap(talker string) *Message {
 
 	_m := &Message{
 		Seq:        m.SortSeq,
@@ -81,66 +79,6 @@ func (m *MessageV4) Wrap(talker string, dataDir string) *Message {
 
 	_m.ParseMediaInfo(content)
 
-	// 图片消息
-	if _m.Type == 3 && dataDir != "" {
-		// 计算talker的MD5
-		talkerMD5 := md5.Sum([]byte(talker))
-		talkerMD5Str := hex.EncodeToString(talkerMD5[:])
-		
-		// 将消息时间转换成秒
-		timeStr := fmt.Sprintf("%d", m.CreateTime)
-		
-		// 构建搜索目录
-		searchDir := filepath.Join(dataDir, "Message", "MessageTemp", talkerMD5Str, "Image")
-		
-		// 按优先级查找图片文件
-		patterns := []string{
-			fmt.Sprintf("%s_.pic.jpg", timeStr),
-			fmt.Sprintf("%s_.pic_hd.jpg", timeStr),
-			fmt.Sprintf("%s_.pic_thumb.jpg", timeStr),
-		}
-		
-		for _, pattern := range patterns {
-			if entries, err := os.ReadDir(searchDir); err == nil {
-				for _, entry := range entries {
-					if !entry.IsDir() && strings.HasSuffix(entry.Name(), pattern) {
-						// 找到文件，设置相对路径
-						_m.Contents["imgfile"] = filepath.Join("/Message/MessageTemp", talkerMD5Str, "Image", entry.Name())
-						break
-					}
-				}
-				if _, exists := _m.Contents["imgfile"]; exists {
-					break // 找到文件就退出
-				}
-			}
-		}
-	}
-
-	// 视频消息
-	if _m.Type == 43 && dataDir != "" {
-		// 计算talker的MD5
-		talkerMD5 := md5.Sum([]byte(talker))
-		talkerMD5Str := hex.EncodeToString(talkerMD5[:])
-		
-		// 将消息时间转换成秒
-		timeStr := fmt.Sprintf("%d", m.CreateTime)
-		
-		// 构建搜索目录
-		searchDir := filepath.Join(dataDir, "Message", "MessageTemp", talkerMD5Str, "Video")
-		
-		// 查找视频文件
-		videoPattern := fmt.Sprintf("%s.mp4", timeStr)
-		if entries, err := os.ReadDir(searchDir); err == nil {
-			for _, entry := range entries {
-				if !entry.IsDir() && strings.HasSuffix(entry.Name(), videoPattern) {
-					// 找到文件，设置相对路径
-					_m.Contents["videofile"] = filepath.Join("/Message/MessageTemp", talkerMD5Str, "Video", entry.Name())
-					break
-				}
-			}
-		}
-	}
-
 	// 语音消息
 	if _m.Type == 34 {
 		_m.Contents["voice"] = fmt.Sprint(m.ServerID)
@@ -152,16 +90,10 @@ func (m *MessageV4) Wrap(talker string, dataDir string) *Message {
 			if _m.Type == 3 && packedInfo.Image != nil {
 				_talkerMd5Bytes := md5.Sum([]byte(talker))
 				talkerMd5 := hex.EncodeToString(_talkerMd5Bytes[:])
-				outfix := "_M"
-				if runtime.GOOS == "windows" {
-					outfix = "_W"
-				}
-				_m.Contents["md5"] = packedInfo.Image.Md5
-				_m.Contents["imgfile"] = filepath.Join("msg", "attach", talkerMd5, _m.Time.Format("2006-01"), "Img", fmt.Sprintf("%s%s.dat", packedInfo.Image.Md5, outfix))
-				_m.Contents["thumb"] = filepath.Join("msg", "attach", talkerMd5, _m.Time.Format("2006-01"), "Img", fmt.Sprintf("%s_t%s.dat", packedInfo.Image.Md5, outfix))
+				_m.Contents["imgfile"] = filepath.Join("msg", "attach", talkerMd5, _m.Time.Format("2006-01"), "Img", fmt.Sprintf("%s.dat", packedInfo.Image.Md5))
+				_m.Contents["thumb"] = filepath.Join("msg", "attach", talkerMd5, _m.Time.Format("2006-01"), "Img", fmt.Sprintf("%s_t.dat", packedInfo.Image.Md5))
 			}
 			if _m.Type == 43 && packedInfo.Video != nil {
-				_m.Contents["md5"] = packedInfo.Video.Md5
 				_m.Contents["videofile"] = filepath.Join("msg", "video", _m.Time.Format("2006-01"), fmt.Sprintf("%s.mp4", packedInfo.Video.Md5))
 				_m.Contents["thumb"] = filepath.Join("msg", "video", _m.Time.Format("2006-01"), fmt.Sprintf("%s_thumb.jpg", packedInfo.Video.Md5))
 			}
