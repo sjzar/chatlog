@@ -80,7 +80,7 @@ func findDataPartition(data []byte) (offset int, size int, err error) {
 			}
 
 			absIndex := headerLen + offset + index
-			offset += index
+			offset += index + 1
 
 			if absIndex < 4 {
 				continue
