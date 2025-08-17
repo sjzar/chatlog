@@ -128,6 +128,7 @@ func (m *Manager) StartService() error {
 
 	// 如果是 4.0 版本，更新下 xorkey
 	if m.ctx.Version == 4 {
+		dat2img.SetAesKey(m.ctx.ImgKey)
 		go dat2img.ScanAndSetXorKey(m.ctx.DataDir)
 	}
 
@@ -268,7 +269,11 @@ func (m *Manager) CommandKey(pid int) (string, error) {
 		return "", fmt.Errorf("wechat process not found")
 	}
 	if len(instances) == 1 {
-		return instances[0].GetKey(context.Background())
+		key, _, err := instances[0].GetKey(context.Background())
+		if err != nil {
+			return "", err
+		}
+		return key, nil
 	}
 	if pid == 0 {
 		str := "Select a process:\n"
@@ -279,7 +284,11 @@ func (m *Manager) CommandKey(pid int) (string, error) {
 	}
 	for _, ins := range instances {
 		if ins.PID == uint32(pid) {
-			return ins.GetKey(context.Background())
+			key, _, err := ins.GetKey(context.Background())
+			if err != nil {
+				return "", err
+			}
+			return key, nil
 		}
 	}
 	return "", fmt.Errorf("wechat process not found")

@@ -23,22 +23,22 @@ const (
 	MaxWorkers   = 16
 )
 
-func (e *V3Extractor) Extract(ctx context.Context, proc *model.Process) (string, error) {
+func (e *V3Extractor) Extract(ctx context.Context, proc *model.Process) (string, string, error) {
 	if proc.Status == model.StatusOffline {
-		return "", errors.ErrWeChatOffline
+		return "", "", errors.ErrWeChatOffline
 	}
 
 	// Open WeChat process
 	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_INFORMATION|windows.PROCESS_VM_READ, false, proc.PID)
 	if err != nil {
-		return "", errors.OpenProcessFailed(err)
+		return "", "", errors.OpenProcessFailed(err)
 	}
 	defer windows.CloseHandle(handle)
 
 	// Check process architecture
 	is64Bit, err := util.Is64Bit(handle)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	// Create context to control all goroutines
@@ -91,14 +91,14 @@ func (e *V3Extractor) Extract(ctx context.Context, proc *model.Process) (string,
 	// Wait for result
 	select {
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return "", "", ctx.Err()
 	case result, ok := <-resultChannel:
 		if ok && result != "" {
-			return result, nil
+			return result, "", nil
 		}
 	}
 
-	return "", errors.ErrNoValidKey
+	return "", "", errors.ErrNoValidKey
 }
 
 // findMemoryV3 searches for writable memory regions in WeChatWin.dll for V3 version

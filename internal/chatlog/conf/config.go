@@ -16,6 +16,7 @@ type ProcessConfig struct {
 	FullVersion string `mapstructure:"full_version" json:"full_version"`
 	DataDir     string `mapstructure:"data_dir" json:"data_dir"`
 	DataKey     string `mapstructure:"data_key" json:"data_key"`
+	ImgKey      string `mapstructure:"img_key" json:"img_key"`
 	WorkDir     string `mapstructure:"work_dir" json:"work_dir"`
 	HTTPEnabled bool   `mapstructure:"http_enabled" json:"http_enabled"`
 	HTTPAddr    string `mapstructure:"http_addr" json:"http_addr"`

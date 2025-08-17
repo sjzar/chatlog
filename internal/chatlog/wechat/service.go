@@ -52,7 +52,7 @@ func (s *Service) GetDataKey(info *wechat.Account) (string, error) {
 		return "", fmt.Errorf("no WeChat instance selected")
 	}
 
-	key, err := info.GetKey(context.Background())
+	key, _, err := info.GetKey(context.Background())
 	if err != nil {
 		return "", err
 	}

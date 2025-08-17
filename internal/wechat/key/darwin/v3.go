@@ -37,18 +37,18 @@ func NewV3Extractor() *V3Extractor {
 	}
 }
 
-func (e *V3Extractor) Extract(ctx context.Context, proc *model.Process) (string, error) {
+func (e *V3Extractor) Extract(ctx context.Context, proc *model.Process) (string, string, error) {
 	if proc.Status == model.StatusOffline {
-		return "", errors.ErrWeChatOffline
+		return "", "", errors.ErrWeChatOffline
 	}
 
 	// Check if SIP is disabled, as it's required for memory reading on macOS
 	if !glance.IsSIPDisabled() {
-		return "", errors.ErrSIPEnabled
+		return "", "", errors.ErrSIPEnabled
 	}
 
 	if e.validator == nil {
-		return "", errors.ErrValidatorNotSet
+		return "", "", errors.ErrValidatorNotSet
 	}
 
 	// Create context to control all goroutines
@@ -101,14 +101,14 @@ func (e *V3Extractor) Extract(ctx context.Context, proc *model.Process) (string,
 	// Wait for result
 	select {
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return "", "", ctx.Err()
 	case result, ok := <-resultChannel:
 		if ok && result != "" {
-			return result, nil
+			return result, "", nil
 		}
 	}
 
-	return "", errors.ErrNoValidKey
+	return "", "", errors.ErrNoValidKey
 }
 
 // findMemory searches for memory regions using Glance

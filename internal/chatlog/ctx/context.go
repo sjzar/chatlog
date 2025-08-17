@@ -25,6 +25,7 @@ type Context struct {
 	DataDir     string
 	DataKey     string
 	DataUsage   string
+	ImgKey      string
 
 	// 工作目录相关状态
 	WorkDir   string
@@ -79,6 +80,7 @@ func (c *Context) SwitchHistory(account string) {
 		c.Version = history.Version
 		c.FullVersion = history.FullVersion
 		c.DataKey = history.DataKey
+		c.ImgKey = history.ImgKey
 		c.DataDir = history.DataDir
 		c.WorkDir = history.WorkDir
 		c.HTTPEnabled = history.HTTPEnabled
@@ -89,6 +91,7 @@ func (c *Context) SwitchHistory(account string) {
 		c.Version = 0
 		c.FullVersion = ""
 		c.DataKey = ""
+		c.ImgKey = ""
 		c.DataDir = ""
 		c.WorkDir = ""
 		c.HTTPEnabled = false
@@ -115,6 +118,9 @@ func (c *Context) Refresh() {
 		c.Status = c.Current.Status
 		if c.Current.Key != "" && c.Current.Key != c.DataKey {
 			c.DataKey = c.Current.Key
+		}
+		if c.Current.ImgKey != "" && c.Current.ImgKey != c.ImgKey {
+			c.ImgKey = c.Current.ImgKey
 		}
 		if c.Current.DataDir != "" && c.Current.DataDir != c.DataDir {
 			c.DataDir = c.Current.DataDir
@@ -179,6 +185,7 @@ func (c *Context) UpdateConfig() {
 		FullVersion: c.FullVersion,
 		DataDir:     c.DataDir,
 		DataKey:     c.DataKey,
+		ImgKey:      c.ImgKey,
 		WorkDir:     c.WorkDir,
 		HTTPEnabled: c.HTTPEnabled,
 		HTTPAddr:    c.HTTPAddr,

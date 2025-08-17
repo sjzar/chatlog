@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"fmt"
 	"runtime"
 	"sync"
 
@@ -29,29 +30,40 @@ var V4KeyPatterns = []KeyPatternInfo{
 	},
 }
 
+var V4ImgKeyPatterns = []KeyPatternInfo{
+	{
+		Pattern: []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+		Offsets: []int{-32},
+	},
+}
+
 type V4Extractor struct {
-	validator   *decrypt.Validator
-	keyPatterns []KeyPatternInfo
+	validator         *decrypt.Validator
+	dataKeyPatterns   []KeyPatternInfo
+	imgKeyPatterns    []KeyPatternInfo
+	processedDataKeys sync.Map // Thread-safe map for processed data keys
+	processedImgKeys  sync.Map // Thread-safe map for processed image keys
 }
 
 func NewV4Extractor() *V4Extractor {
 	return &V4Extractor{
-		keyPatterns: V4KeyPatterns,
+		dataKeyPatterns: V4KeyPatterns,
+		imgKeyPatterns:  V4ImgKeyPatterns,
 	}
 }
 
-func (e *V4Extractor) Extract(ctx context.Context, proc *model.Process) (string, error) {
+func (e *V4Extractor) Extract(ctx context.Context, proc *model.Process) (string, string, error) {
 	if proc.Status == model.StatusOffline {
-		return "", errors.ErrWeChatOffline
+		return "", "", errors.ErrWeChatOffline
 	}
 
 	// Check if SIP is disabled, as it's required for memory reading on macOS
 	if !glance.IsSIPDisabled() {
-		return "", errors.ErrSIPEnabled
+		return "", "", errors.ErrSIPEnabled
 	}
 
 	if e.validator == nil {
-		return "", errors.ErrValidatorNotSet
+		return "", "", errors.ErrValidatorNotSet
 	}
 
 	// Create context to control all goroutines
@@ -60,7 +72,7 @@ func (e *V4Extractor) Extract(ctx context.Context, proc *model.Process) (string,
 
 	// Create channels for memory data and results
 	memoryChannel := make(chan []byte, 100)
-	resultChannel := make(chan string, 1)
+	resultChannel := make(chan [2]string, 1)
 
 	// Determine number of worker goroutines
 	workerCount := runtime.NumCPU()
@@ -102,16 +114,36 @@ func (e *V4Extractor) Extract(ctx context.Context, proc *model.Process) (string,
 	}()
 
 	// Wait for result
-	select {
-	case <-ctx.Done():
-		return "", ctx.Err()
-	case result, ok := <-resultChannel:
-		if ok && result != "" {
-			return result, nil
+	var finalDataKey, finalImgKey string
+
+	for {
+		select {
+		case <-ctx.Done():
+			return "", "", ctx.Err()
+		case result, ok := <-resultChannel:
+			if !ok {
+				// Channel closed, all workers finished, return whatever keys we found
+				if finalDataKey != "" || finalImgKey != "" {
+					return finalDataKey, finalImgKey, nil
+				}
+				return "", "", errors.ErrNoValidKey
+			}
+
+			// Update our best found keys
+			if result[0] != "" {
+				finalDataKey = result[0]
+			}
+			if result[1] != "" {
+				finalImgKey = result[1]
+			}
+
+			// If we have both keys, we can return early
+			if finalDataKey != "" && finalImgKey != "" {
+				cancel() // Cancel remaining work
+				return finalDataKey, finalImgKey, nil
+			}
 		}
 	}
-
-	return "", errors.ErrNoValidKey
 }
 
 // findMemory searches for memory regions using Glance
@@ -181,8 +213,8 @@ func (e *V4Extractor) findMemory(ctx context.Context, pid uint32, memoryChannel 
 				Int("chunk_index", i+1).
 				Int("total_chunks", chunkCount).
 				Int("chunk_size", len(chunk)).
-				Int("start_offset", start).
-				Int("end_offset", end).
+				Str("start_offset", fmt.Sprintf("%X", start)).
+				Str("end_offset", fmt.Sprintf("%X", end)).
 				Msg("Processing memory chunk")
 
 			select {
@@ -197,28 +229,65 @@ func (e *V4Extractor) findMemory(ctx context.Context, pid uint32, memoryChannel 
 }
 
 // worker processes memory regions to find V4 version key
-func (e *V4Extractor) worker(ctx context.Context, memoryChannel <-chan []byte, resultChannel chan<- string) {
+func (e *V4Extractor) worker(ctx context.Context, memoryChannel <-chan []byte, resultChannel chan<- [2]string) {
+	// Track found keys
+	var dataKey, imgKey string
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case memory, ok := <-memoryChannel:
 			if !ok {
+				// Memory scanning complete, return whatever keys we found
+				if dataKey != "" || imgKey != "" {
+					select {
+					case resultChannel <- [2]string{dataKey, imgKey}:
+					default:
+					}
+				}
 				return
 			}
 
-			if key, ok := e.SearchKey(ctx, memory); ok {
-				select {
-				case resultChannel <- key:
-				default:
+			// Search for data key
+			if dataKey == "" {
+				if key, ok := e.SearchKey(ctx, memory); ok {
+					dataKey = key
+					log.Debug().Msg("Data key found: " + key)
+					// Report immediately when found
+					select {
+					case resultChannel <- [2]string{dataKey, imgKey}:
+					case <-ctx.Done():
+						return
+					}
 				}
+			}
+
+			// Search for image key
+			if imgKey == "" {
+				if key, ok := e.SearchImgKey(ctx, memory); ok {
+					imgKey = key
+					log.Debug().Msg("Image key found: " + key)
+					// Report immediately when found
+					select {
+					case resultChannel <- [2]string{dataKey, imgKey}:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
+
+			// If we have both keys, exit worker
+			if dataKey != "" && imgKey != "" {
+				log.Debug().Msg("Both keys found, worker exiting")
+				return
 			}
 		}
 	}
 }
 
 func (e *V4Extractor) SearchKey(ctx context.Context, memory []byte) (string, bool) {
-	for _, keyPattern := range e.keyPatterns {
+	for _, keyPattern := range e.dataKeyPatterns {
 		index := len(memory)
 
 		for {
@@ -244,31 +313,103 @@ func (e *V4Extractor) SearchKey(ctx context.Context, memory []byte) (string, boo
 
 				// Extract the key data, which is at the offset position and 32 bytes long
 				keyData := memory[keyOffset : keyOffset+32]
+				keyHex := hex.EncodeToString(keyData)
+
+				// Skip if we've already processed this key (thread-safe check)
+				if _, loaded := e.processedDataKeys.LoadOrStore(keyHex, true); loaded {
+					continue
+				}
 
 				// Validate key against database header
-				if keyData, ok := e.validate(ctx, keyData); ok {
+				if e.validator.Validate(keyData) {
 					log.Debug().
 						Str("pattern", hex.EncodeToString(keyPattern.Pattern)).
 						Int("offset", offset).
-						Str("key", hex.EncodeToString(keyData)).
-						Msg("Key found")
-					return hex.EncodeToString(keyData), true
+						Str("key", keyHex).
+						Msg("Data key found")
+					return keyHex, true
 				}
 			}
 
 			index -= 1
+			if index < 0 {
+				break
+			}
 		}
 	}
 
 	return "", false
 }
 
-func (e *V4Extractor) validate(ctx context.Context, keyDate []byte) ([]byte, bool) {
-	if e.validator.Validate(keyDate) {
-		return keyDate, true
+func (e *V4Extractor) SearchImgKey(ctx context.Context, memory []byte) (string, bool) {
+
+	for _, keyPattern := range e.imgKeyPatterns {
+		index := len(memory)
+
+		for {
+			select {
+			case <-ctx.Done():
+				return "", false
+			default:
+			}
+
+			// Find pattern from end to beginning
+			index = bytes.LastIndex(memory[:index], keyPattern.Pattern)
+			if index == -1 {
+				break // No more matches found
+			}
+
+			// align to 16 bytes
+			index = bytes.LastIndexFunc(memory[:index], func(r rune) bool {
+				return r != 0
+			})
+
+			if index == -1 {
+				break // No more matches found
+			}
+
+			index += 1
+
+			// Try each offset for this pattern
+			for _, offset := range keyPattern.Offsets {
+				// Check if we have enough space for the key (16 bytes for image key)
+				keyOffset := index + offset
+				if keyOffset < 0 || keyOffset+16 > len(memory) {
+					continue
+				}
+
+				if bytes.Equal(memory[keyOffset:keyOffset+16], []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}) {
+					continue
+				}
+
+				// Extract the key data, which is at the offset position and 16 bytes long
+				keyData := memory[keyOffset : keyOffset+16]
+				keyHex := hex.EncodeToString(keyData)
+
+				// Skip if we've already processed this key (thread-safe check)
+				if _, loaded := e.processedImgKeys.LoadOrStore(keyHex, true); loaded {
+					continue
+				}
+
+				// Validate key using image key validator
+				if e.validator.ValidateImgKey(keyData) {
+					log.Debug().
+						Str("pattern", hex.EncodeToString(keyPattern.Pattern)).
+						Int("offset", offset).
+						Str("key", keyHex).
+						Msg("Image key found")
+					return keyHex, true
+				}
+			}
+
+			index -= 1
+			if index < 0 {
+				break
+			}
+		}
 	}
-	// Try to find a valid key by ***
-	return nil, false
+
+	return "", false
 }
 
 func (e *V4Extractor) SetValidate(validator *decrypt.Validator) {

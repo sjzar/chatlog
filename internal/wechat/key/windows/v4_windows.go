@@ -20,15 +20,15 @@ const (
 	MEM_PRIVATE = 0x20000
 )
 
-func (e *V4Extractor) Extract(ctx context.Context, proc *model.Process) (string, error) {
+func (e *V4Extractor) Extract(ctx context.Context, proc *model.Process) (string, string, error) {
 	if proc.Status == model.StatusOffline {
-		return "", errors.ErrWeChatOffline
+		return "", "", errors.ErrWeChatOffline
 	}
 
 	// Open process handle
 	handle, err := windows.OpenProcess(windows.PROCESS_VM_READ|windows.PROCESS_QUERY_INFORMATION, false, proc.PID)
 	if err != nil {
-		return "", errors.OpenProcessFailed(err)
+		return "", "", errors.OpenProcessFailed(err)
 	}
 	defer windows.CloseHandle(handle)
 
@@ -38,7 +38,7 @@ func (e *V4Extractor) Extract(ctx context.Context, proc *model.Process) (string,
 
 	// Create channels for memory data and results
 	memoryChannel := make(chan []byte, 100)
-	resultChannel := make(chan string, 1)
+	resultChannel := make(chan [2]string, 1)
 
 	// Determine number of worker goroutines
 	workerCount := runtime.NumCPU()
@@ -80,16 +80,36 @@ func (e *V4Extractor) Extract(ctx context.Context, proc *model.Process) (string,
 	}()
 
 	// Wait for result
-	select {
-	case <-ctx.Done():
-		return "", ctx.Err()
-	case result, ok := <-resultChannel:
-		if ok && result != "" {
-			return result, nil
+	var finalDataKey, finalImgKey string
+
+	for {
+		select {
+		case <-ctx.Done():
+			return "", "", ctx.Err()
+		case result, ok := <-resultChannel:
+			if !ok {
+				// Channel closed, all workers finished, return whatever keys we found
+				if finalDataKey != "" || finalImgKey != "" {
+					return finalDataKey, finalImgKey, nil
+				}
+				return "", "", errors.ErrNoValidKey
+			}
+
+			// Update our best found keys
+			if result[0] != "" {
+				finalDataKey = result[0]
+			}
+			if result[1] != "" {
+				finalImgKey = result[1]
+			}
+
+			// If we have both keys, we can return early
+			if finalDataKey != "" && finalImgKey != "" {
+				cancel() // Cancel remaining work
+				return finalDataKey, finalImgKey, nil
+			}
 		}
 	}
-
-	return "", errors.ErrNoValidKey
 }
 
 // findMemoryV4 searches for writable memory regions for V4 version
@@ -146,7 +166,7 @@ func (e *V4Extractor) findMemory(ctx context.Context, handle windows.Handle, mem
 }
 
 // workerV4 processes memory regions to find V4 version key
-func (e *V4Extractor) worker(ctx context.Context, handle windows.Handle, memoryChannel <-chan []byte, resultChannel chan<- string) {
+func (e *V4Extractor) worker(ctx context.Context, handle windows.Handle, memoryChannel <-chan []byte, resultChannel chan<- [2]string) {
 	// Define search pattern for V4
 	keyPattern := []byte{
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -156,12 +176,23 @@ func (e *V4Extractor) worker(ctx context.Context, handle windows.Handle, memoryC
 	ptrSize := 8
 	littleEndianFunc := binary.LittleEndian.Uint64
 
+	// Track found keys
+	var dataKey, imgKey string
+	keysFound := make(map[uint64]bool) // Track processed addresses to avoid duplicates
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case memory, ok := <-memoryChannel:
 			if !ok {
+				// Memory scanning complete, return whatever keys we found
+				if dataKey != "" || imgKey != "" {
+					select {
+					case resultChannel <- [2]string{dataKey, imgKey}:
+					default:
+					}
+				}
 				return
 			}
 
@@ -182,12 +213,43 @@ func (e *V4Extractor) worker(ctx context.Context, handle windows.Handle, memoryC
 				// Extract and validate pointer value
 				ptrValue := littleEndianFunc(memory[index-ptrSize : index])
 				if ptrValue > 0x10000 && ptrValue < 0x7FFFFFFFFFFF {
-					if key := e.validateKey(handle, ptrValue); key != "" {
-						select {
-						case resultChannel <- key:
-							log.Debug().Msg("Valid key found: " + key)
+					// Skip if we've already processed this address
+					if keysFound[ptrValue] {
+						index -= 1
+						continue
+					}
+					keysFound[ptrValue] = true
+
+					// Validate key and determine type
+					if key, isImgKey := e.validateKey(handle, ptrValue); key != "" {
+						if isImgKey {
+							if imgKey == "" {
+								imgKey = key
+								log.Debug().Msg("Image key found: " + key)
+								// Report immediately when found
+								select {
+								case resultChannel <- [2]string{dataKey, imgKey}:
+								case <-ctx.Done():
+									return
+								}
+							}
+						} else {
+							if dataKey == "" {
+								dataKey = key
+								log.Debug().Msg("Data key found: " + key)
+								// Report immediately when found
+								select {
+								case resultChannel <- [2]string{dataKey, imgKey}:
+								case <-ctx.Done():
+									return
+								}
+							}
+						}
+
+						// If we have both keys, exit worker
+						if dataKey != "" && imgKey != "" {
+							log.Debug().Msg("Both keys found, worker exiting")
 							return
-						default:
 						}
 					}
 				}
@@ -197,17 +259,22 @@ func (e *V4Extractor) worker(ctx context.Context, handle windows.Handle, memoryC
 	}
 }
 
-// validateKey validates a single key candidate
-func (e *V4Extractor) validateKey(handle windows.Handle, addr uint64) string {
+// validateKey validates a single key candidate and returns the key and whether it's an image key
+func (e *V4Extractor) validateKey(handle windows.Handle, addr uint64) (string, bool) {
 	keyData := make([]byte, 0x20) // 32-byte key
 	if err := windows.ReadProcessMemory(handle, uintptr(addr), &keyData[0], uintptr(len(keyData)), nil); err != nil {
-		return ""
+		return "", false
 	}
 
-	// Validate key against database header
+	// First check if it's a valid database key
 	if e.validator.Validate(keyData) {
-		return hex.EncodeToString(keyData)
+		return hex.EncodeToString(keyData), false // Data key
 	}
 
-	return ""
+	// Then check if it's a valid image key
+	if e.validator.ValidateImgKey(keyData) {
+		return hex.EncodeToString(keyData[:16]), true // Image key
+	}
+
+	return "", false
 }
