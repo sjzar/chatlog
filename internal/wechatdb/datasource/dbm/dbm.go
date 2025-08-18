@@ -2,6 +2,7 @@ package dbm
 
 import (
 	"database/sql"
+	"fmt"
 	"runtime"
 	"sync"
 	"time"
@@ -58,28 +59,67 @@ func (d *DBManager) AddCallback(name string, callback func(event fsnotify.Event)
 	return nil
 }
 
-func (d *DBManager) GetDB(name string) (*sql.DB, error) {
-	dbPaths, err := d.GetDBPath(name)
-	if err != nil {
-		return nil, err
-	}
-	return d.OpenDB(dbPaths[0])
-}
-
+// GetDBs 根据组名获取多个数据库连接
 func (d *DBManager) GetDBs(name string) ([]*sql.DB, error) {
-	dbPaths, err := d.GetDBPath(name)
+	log.Debug().Str("group_name", name).Msg("开始获取数据库连接组")
+
+	d.mutex.RLock()
+	group, exists := d.fgs[name]
+	d.mutex.RUnlock()
+
+	if !exists {
+		log.Error().Str("group_name", name).Msg("数据库组不存在")
+		return nil, fmt.Errorf("group %s not found", name)
+	}
+
+	files, err := group.List()
 	if err != nil {
+		log.Error().Err(err).Str("group_name", name).Msg("获取数据库文件列表失败")
 		return nil, err
 	}
-	dbs := make([]*sql.DB, 0)
-	for _, file := range dbPaths {
+
+	log.Debug().Str("group_name", name).Int("file_count", len(files)).Msg("找到数据库组文件")
+
+	var dbs []*sql.DB
+	for i, file := range files {
+		log.Debug().Str("group_name", name).Int("file_index", i).Str("file_path", file).Msg("尝试连接数据库文件")
+
 		db, err := d.OpenDB(file)
 		if err != nil {
-			return nil, err
+			log.Error().Err(err).Str("group_name", name).Int("file_index", i).Str("file_path", file).Msg("连接数据库文件失败")
+			continue
 		}
+
+		log.Debug().Str("group_name", name).Int("file_index", i).Str("file_path", file).Msg("成功连接数据库文件")
 		dbs = append(dbs, db)
 	}
+
+	if len(dbs) == 0 {
+		log.Error().Str("group_name", name).Int("total_files", len(files)).Msg("所有数据库文件连接都失败")
+		return nil, fmt.Errorf("no db files available for group %s", name)
+	}
+
+	log.Info().Str("group_name", name).Int("connected_db_count", len(dbs)).Int("total_files", len(files)).Msg("成功获取数据库连接组")
 	return dbs, nil
+}
+
+// GetDB 根据组名获取单个数据库连接
+func (d *DBManager) GetDB(name string) (*sql.DB, error) {
+	log.Debug().Str("group_name", name).Msg("开始获取单个数据库连接")
+
+	dbs, err := d.GetDBs(name)
+	if err != nil {
+		log.Error().Err(err).Str("group_name", name).Msg("获取数据库连接组失败")
+		return nil, err
+	}
+
+	if len(dbs) == 0 {
+		log.Error().Str("group_name", name).Msg("数据库连接组为空")
+		return nil, fmt.Errorf("no db available for group %s", name)
+	}
+
+	log.Debug().Str("group_name", name).Msg("返回第一个数据库连接")
+	return dbs[0], nil
 }
 
 func (d *DBManager) GetDBPath(name string) ([]string, error) {

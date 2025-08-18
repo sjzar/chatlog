@@ -16,14 +16,18 @@ func init() {
 	serverCmd.Flags().StringVarP(&serverWorkDir, "work-dir", "w", "", "work dir")
 	serverCmd.Flags().StringVarP(&serverPlatform, "platform", "p", runtime.GOOS, "platform")
 	serverCmd.Flags().IntVarP(&serverVer, "version", "v", 3, "version")
+	serverCmd.Flags().StringVarP(&serverDataKey, "data-key", "k", "", "data key for auto decrypt")
+	serverCmd.Flags().BoolVarP(&serverAutoDecrypt, "auto-decrypt", "", false, "enable auto decrypt")
 }
 
 var (
-	serverAddr     string
-	serverDataDir  string
-	serverWorkDir  string
-	serverPlatform string
-	serverVer      int
+	serverAddr        string
+	serverDataDir     string
+	serverWorkDir     string
+	serverPlatform    string
+	serverVer         int
+	serverDataKey     string
+	serverAutoDecrypt bool
 )
 
 var serverCmd = &cobra.Command{
@@ -35,7 +39,7 @@ var serverCmd = &cobra.Command{
 			log.Err(err).Msg("failed to create chatlog instance")
 			return
 		}
-		if err := m.CommandHTTPServer(serverAddr, serverDataDir, serverWorkDir, serverPlatform, serverVer); err != nil {
+		if err := m.CommandHTTPServer(serverAddr, serverDataDir, serverWorkDir, serverPlatform, serverVer, serverDataKey, serverAutoDecrypt); err != nil {
 			log.Err(err).Msg("failed to start server")
 			return
 		}

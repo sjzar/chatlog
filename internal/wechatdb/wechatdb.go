@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/rs/zerolog/log"
 	"github.com/sjzar/chatlog/internal/model"
 	"github.com/sjzar/chatlog/internal/wechatdb/datasource"
 	"github.com/sjzar/chatlog/internal/wechatdb/repository"
@@ -122,5 +123,14 @@ func (w *DB) GetSessions(key string, limit, offset int) (*GetSessionsResp, error
 }
 
 func (w *DB) GetMedia(_type string, key string) (*model.Media, error) {
-	return w.repo.GetMedia(context.Background(), _type, key)
+	log.Info().Str("type", _type).Str("key", key).Str("platform", w.platform).Int("version", w.version).Msg("开始获取媒体文件")
+
+	media, err := w.repo.GetMedia(context.Background(), _type, key)
+	if err != nil {
+		log.Error().Err(err).Str("type", _type).Str("key", key).Str("platform", w.platform).Int("version", w.version).Msg("获取媒体文件失败")
+		return nil, err
+	}
+
+	log.Info().Str("type", _type).Str("key", key).Str("platform", w.platform).Int("version", w.version).Int("data_size", len(media.Data)).Msg("成功获取媒体文件")
+	return media, nil
 }
