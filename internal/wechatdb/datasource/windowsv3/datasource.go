@@ -71,17 +71,19 @@ type MessageDBInfo struct {
 
 // DataSource 实现了 DataSource 接口
 type DataSource struct {
-	path string
-	dbm  *dbm.DBManager
+	path    string
+	dataDir string
+	dbm     *dbm.DBManager
 
 	// 消息数据库信息
 	messageInfos []MessageDBInfo
 }
 
 // New 创建一个新的 WindowsV3DataSource
-func New(path string) (*DataSource, error) {
+func New(path string, dataDir string) (*DataSource, error) {
 	ds := &DataSource{
 		path:         path,
+		dataDir:      dataDir,
 		dbm:          dbm.NewDBManager(path),
 		messageInfos: make([]MessageDBInfo, 0),
 	}
@@ -327,8 +329,8 @@ func (ds *DataSource) GetMessages(ctx context.Context, startTime, endTime time.T
 				msg.CompressContent = compressContent
 				msg.BytesExtra = bytesExtra
 
-				// 将消息转换为标准格式
-				message := msg.Wrap()
+							// 将消息转换为标准格式
+			message := msg.Wrap(ds.dataDir)
 
 				// 应用sender过滤
 				if len(senders) > 0 {

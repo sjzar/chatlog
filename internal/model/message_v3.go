@@ -1,7 +1,10 @@
 package model
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -52,7 +55,7 @@ type MessageV3 struct {
 	BytesExtra      []byte `json:"BytesExtra"`      // protobuf 额外数据，记录群聊发送人等信息
 }
 
-func (m *MessageV3) Wrap() *Message {
+func (m *MessageV3) Wrap(dataDir string) *Message {
 
 	_m := &Message{
 		Seq:        m.Sequence,
@@ -64,6 +67,7 @@ func (m *MessageV3) Wrap() *Message {
 		SubType:    int64(m.SubType),
 		Content:    m.StrContent,
 		Version:    WeChatV3,
+		Contents:   make(map[string]interface{}),
 	}
 
 	if !_m.IsChatRoom && !_m.IsSelf {
@@ -78,6 +82,66 @@ func (m *MessageV3) Wrap() *Message {
 	}
 
 	_m.ParseMediaInfo(_m.Content)
+
+	// 图片消息
+	if _m.Type == 3 && dataDir != "" {
+		// 计算talker的MD5
+		talkerMD5 := md5.Sum([]byte(m.StrTalker))
+		talkerMD5Str := hex.EncodeToString(talkerMD5[:])
+		
+		// 将消息时间转换成秒
+		timeStr := fmt.Sprintf("%d", m.CreateTime)
+		
+		// 构建搜索目录
+		searchDir := filepath.Join(dataDir, "Message", "MessageTemp", talkerMD5Str, "Image")
+		
+		// 按优先级查找图片文件
+		patterns := []string{
+			fmt.Sprintf("%s_.pic.jpg", timeStr),
+			fmt.Sprintf("%s_.pic_hd.jpg", timeStr),
+			fmt.Sprintf("%s_.pic_thumb.jpg", timeStr),
+		}
+		
+		for _, pattern := range patterns {
+			if entries, err := os.ReadDir(searchDir); err == nil {
+				for _, entry := range entries {
+					if !entry.IsDir() && strings.HasSuffix(entry.Name(), pattern) {
+						// 找到文件，设置相对路径
+						_m.Contents["imgfile"] = filepath.Join("/Message/MessageTemp", talkerMD5Str, "Image", entry.Name())
+						break
+					}
+				}
+				if _, exists := _m.Contents["imgfile"]; exists {
+					break // 找到文件就退出
+				}
+			}
+		}
+	}
+
+	// 视频消息
+	if _m.Type == 43 && dataDir != "" {
+		// 计算talker的MD5
+		talkerMD5 := md5.Sum([]byte(m.StrTalker))
+		talkerMD5Str := hex.EncodeToString(talkerMD5[:])
+		
+		// 将消息时间转换成秒
+		timeStr := fmt.Sprintf("%d", m.CreateTime)
+		
+		// 构建搜索目录
+		searchDir := filepath.Join(dataDir, "Message", "MessageTemp", talkerMD5Str, "Video")
+		
+		// 查找视频文件
+		videoPattern := fmt.Sprintf("%s.mp4", timeStr)
+		if entries, err := os.ReadDir(searchDir); err == nil {
+			for _, entry := range entries {
+				if !entry.IsDir() && strings.HasSuffix(entry.Name(), videoPattern) {
+					// 找到文件，设置相对路径
+					_m.Contents["videofile"] = filepath.Join("/Message/MessageTemp", talkerMD5Str, "Video", entry.Name())
+					break
+				}
+			}
+		}
+	}
 
 	// 语音消息
 	if _m.Type == 34 {

@@ -57,16 +57,18 @@ var Groups = []*dbm.Group{
 }
 
 type DataSource struct {
-	path string
-	dbm  *dbm.DBManager
+	path    string
+	dataDir string
+	dbm     *dbm.DBManager
 
 	talkerDBMap      map[string]string
 	user2DisplayName map[string]string
 }
 
-func New(path string) (*DataSource, error) {
+func New(path string, dataDir string) (*DataSource, error) {
 	ds := &DataSource{
 		path:             path,
+		dataDir:          dataDir,
 		dbm:              dbm.NewDBManager(path),
 		talkerDBMap:      make(map[string]string),
 		user2DisplayName: make(map[string]string),
@@ -277,7 +279,7 @@ func (ds *DataSource) GetMessages(ctx context.Context, startTime, endTime time.T
 			}
 
 			// 将消息包装为通用模型
-			message := msg.Wrap(talkerItem)
+			message := msg.Wrap(talkerItem, ds.dataDir)
 
 			// 应用sender过滤
 			if len(senders) > 0 {

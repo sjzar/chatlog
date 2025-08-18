@@ -36,16 +36,16 @@ type DataSource interface {
 	Close() error
 }
 
-func New(path string, platform string, version int) (DataSource, error) {
+func New(workDir string, dataDir string, platform string, version int) (DataSource, error) {
 	switch {
 	case platform == "windows" && version == 3:
-		return windowsv3.New(path)
+		return windowsv3.New(workDir, dataDir)
 	case platform == "windows" && version == 4:
-		return v4.New(path)
+		return v4.New(workDir)
 	case platform == "darwin" && version == 3:
-		return darwinv3.New(path)
+		return darwinv3.New(workDir, dataDir)
 	case platform == "darwin" && version == 4:
-		return v4.New(path)
+		return v4.New(workDir)
 	default:
 		return nil, errors.PlatformUnsupported(platform, version)
 	}
