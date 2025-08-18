@@ -62,7 +62,7 @@ type App struct {
 	Type              int         `xml:"type"`
 	Title             string      `xml:"title"`
 	Des               string      `xml:"des"`
-	URL               string      `xml:"url"`                         // type 5 分享
+	URL               string      `xml:"url"`                         // type 4/5 分享
 	AppAttach         *AppAttach  `xml:"appattach,omitempty"`         // type 6 文件
 	MD5               string      `xml:"md5,omitempty"`               // type 6 文件
 	RecordItem        *RecordItem `xml:"recorditem,omitempty"`        // type 19 合并转发

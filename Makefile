@@ -48,9 +48,16 @@ crossbuild: clean
 		float=$$(echo $$platform | cut -d/ -f3); \
 		output_name=bin/chatlog_$${os}_$${arch}; \
 		[ "$$float" != "" ] && output_name=$$output_name_$$float; \
+		# 👉 仅 Windows 添加 .exe 后缀
+		[ "$$os" = "windows" ] && output_name=$${output_name}.exe; \
 		echo "🔨 Building for $$os/$$arch..."; \
 		echo "🔨 Building for $$output_name..."; \
-		GOOS=$$os GOARCH=$$arch CGO_ENABLED=1 GOARM=$$float $(GO) build -trimpath $(LDFLAGS) -o $$output_name main.go ; \
+		if [ "$$os" = "windows" ]; then \
+			CC=x86_64-w64-mingw32-gcc; \
+		else \
+			CC=gcc; \
+		fi; \
+		GOOS=$$os GOARCH=$$arch CGO_ENABLED=1 CC=$$CC GOARM=$$float $(GO) build -trimpath $(LDFLAGS) -o $$output_name main.go ; \
 		if [ "$(ENABLE_UPX)" = "1" ] && echo "$(UPX_PLATFORMS)" | grep -q "$$os/$$arch"; then \
 			echo "⚙️ Compressing binary $$output_name..." && upx --best $$output_name; \
 		fi; \

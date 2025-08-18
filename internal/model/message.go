@@ -88,6 +88,13 @@ func (m *Message) ParseMediaInfo(data string) error {
 	case 49:
 		m.SubType = int64(msg.App.Type)
 		switch m.SubType {
+		case 1:
+			m.Contents["title"] = msg.App.Title
+			m.Contents["desc"] = msg.App.Des
+		case 4:
+			m.Contents["title"] = msg.App.Title
+			m.Contents["desc"] = msg.App.Des
+			m.Contents["url"] = msg.App.URL
 		case 5:
 			// 链接
 			m.Contents["title"] = msg.App.Title
@@ -290,6 +297,10 @@ func (m *Message) PlainTextContent() string {
 		return "[动画表情]"
 	case 49:
 		switch m.SubType {
+		case 1:
+			return fmt.Sprintf("[链接文本|%s](%s)", m.Contents["title"], m.Contents["desc"])
+		case 4:
+			return fmt.Sprintf("[分享|%s|%s](%s)", m.Contents["title"], m.Contents["desc"], m.Contents["url"])
 		case 5:
 			return fmt.Sprintf("[链接|%s](%s)", m.Contents["title"], m.Contents["url"])
 		case 6:
