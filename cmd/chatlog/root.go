@@ -35,14 +35,8 @@ var rootCmd = &cobra.Command{
 }
 
 func Root(cmd *cobra.Command, args []string) {
-
-	m, err := chatlog.New("")
-	if err != nil {
-		log.Err(err).Msg("failed to create chatlog instance")
-		return
-	}
-
-	if err := m.Run(); err != nil {
+	m := chatlog.New()
+	if err := m.Run(""); err != nil {
 		log.Err(err).Msg("failed to run chatlog instance")
 	}
 }

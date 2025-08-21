@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/sjzar/chatlog/internal/chatlog/ctx"
 	"github.com/sjzar/chatlog/internal/chatlog/database"
 	"github.com/sjzar/chatlog/internal/chatlog/mcp"
 	"github.com/sjzar/chatlog/internal/errors"
@@ -14,20 +13,21 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-const (
-	DefalutHTTPAddr = "127.0.0.1:5030"
-)
-
 type Service struct {
-	ctx *ctx.Context
-	db  *database.Service
-	mcp *mcp.Service
+	conf Config
+	db   *database.Service
+	mcp  *mcp.Service
 
 	router *gin.Engine
 	server *http.Server
 }
 
-func NewService(ctx *ctx.Context, db *database.Service, mcp *mcp.Service) *Service {
+type Config interface {
+	GetHTTPAddr() string
+	GetDataDir() string
+}
+
+func NewService(conf Config, db *database.Service, mcp *mcp.Service) *Service {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 
@@ -40,11 +40,12 @@ func NewService(ctx *ctx.Context, db *database.Service, mcp *mcp.Service) *Servi
 	router.Use(
 		errors.RecoveryMiddleware(),
 		errors.ErrorHandlerMiddleware(),
-		gin.LoggerWithWriter(log.Logger),
+		gin.LoggerWithWriter(log.Logger, "/health"),
+		corsMiddleware(),
 	)
 
 	s := &Service{
-		ctx:    ctx,
+		conf:   conf,
 		db:     db,
 		mcp:    mcp,
 		router: router,
@@ -56,12 +57,8 @@ func NewService(ctx *ctx.Context, db *database.Service, mcp *mcp.Service) *Servi
 
 func (s *Service) Start() error {
 
-	if s.ctx.HTTPAddr == "" {
-		s.ctx.HTTPAddr = DefalutHTTPAddr
-	}
-
 	s.server = &http.Server{
-		Addr:    s.ctx.HTTPAddr,
+		Addr:    s.conf.GetHTTPAddr(),
 		Handler: s.router,
 	}
 
@@ -72,23 +69,19 @@ func (s *Service) Start() error {
 		}
 	}()
 
-	log.Info().Msg("Starting HTTP server on " + s.ctx.HTTPAddr)
+	log.Info().Msg("Starting HTTP server on " + s.conf.GetHTTPAddr())
 
 	return nil
 }
 
 func (s *Service) ListenAndServe() error {
 
-	if s.ctx.HTTPAddr == "" {
-		s.ctx.HTTPAddr = DefalutHTTPAddr
-	}
-
 	s.server = &http.Server{
-		Addr:    s.ctx.HTTPAddr,
+		Addr:    s.conf.GetHTTPAddr(),
 		Handler: s.router,
 	}
 
-	log.Info().Msg("Starting HTTP server on " + s.ctx.HTTPAddr)
+	log.Info().Msg("Starting HTTP server on " + s.conf.GetHTTPAddr())
 	return s.server.ListenAndServe()
 }
 

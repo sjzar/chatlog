@@ -1,18 +1,28 @@
 package ctx
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/rs/zerolog/log"
 	"github.com/sjzar/chatlog/internal/chatlog/conf"
 	"github.com/sjzar/chatlog/internal/wechat"
+	"github.com/sjzar/chatlog/pkg/config"
 	"github.com/sjzar/chatlog/pkg/util"
+)
+
+const (
+	DefalutHTTPAddr = "127.0.0.1:5030"
 )
 
 // Context is a context for a chatlog.
 // It is used to store information about the chatlog.
 type Context struct {
-	conf *conf.Service
+	conf *conf.TUIConfig
+	cm   *config.Manager
 	mu   sync.RWMutex
 
 	History map[string]conf.ProcessConfig
@@ -49,20 +59,26 @@ type Context struct {
 	WeChatInstances []*wechat.Account
 }
 
-func New(conf *conf.Service) *Context {
+func New(configPath string) (*Context, error) {
+
+	conf, tcm, err := conf.LoadTUIConfig(configPath)
+	if err != nil {
+		return nil, err
+	}
+
 	ctx := &Context{
 		conf: conf,
+		cm:   tcm,
 	}
 
 	ctx.loadConfig()
 
-	return ctx
+	return ctx, nil
 }
 
 func (c *Context) loadConfig() {
-	conf := c.conf.GetConfig()
-	c.History = conf.ParseHistory()
-	c.SwitchHistory(conf.LastAccount)
+	c.History = c.conf.ParseHistory()
+	c.SwitchHistory(c.conf.LastAccount)
 	c.Refresh()
 }
 
@@ -138,9 +154,39 @@ func (c *Context) Refresh() {
 	}
 }
 
+func (c *Context) GetDataDir() string {
+	return c.DataDir
+}
+
+func (c *Context) GetWorkDir() string {
+	return c.WorkDir
+}
+
+func (c *Context) GetPlatform() string {
+	return c.Platform
+}
+
+func (c *Context) GetVersion() int {
+	return c.Version
+}
+
+func (c *Context) GetDataKey() string {
+	return c.DataKey
+}
+
+func (c *Context) GetHTTPAddr() string {
+	if c.HTTPAddr == "" {
+		c.HTTPAddr = DefalutHTTPAddr
+	}
+	return c.HTTPAddr
+}
+
 func (c *Context) SetHTTPEnabled(enabled bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.HTTPEnabled == enabled {
+		return
+	}
 	c.HTTPEnabled = enabled
 	c.UpdateConfig()
 }
@@ -148,6 +194,9 @@ func (c *Context) SetHTTPEnabled(enabled bool) {
 func (c *Context) SetHTTPAddr(addr string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.HTTPAddr == addr {
+		return
+	}
 	c.HTTPAddr = addr
 	c.UpdateConfig()
 }
@@ -155,6 +204,9 @@ func (c *Context) SetHTTPAddr(addr string) {
 func (c *Context) SetWorkDir(dir string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.WorkDir == dir {
+		return
+	}
 	c.WorkDir = dir
 	c.UpdateConfig()
 	c.Refresh()
@@ -163,6 +215,9 @@ func (c *Context) SetWorkDir(dir string) {
 func (c *Context) SetDataDir(dir string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.DataDir == dir {
+		return
+	}
 	c.DataDir = dir
 	c.UpdateConfig()
 	c.Refresh()
@@ -171,12 +226,16 @@ func (c *Context) SetDataDir(dir string) {
 func (c *Context) SetAutoDecrypt(enabled bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.AutoDecrypt == enabled {
+		return
+	}
 	c.AutoDecrypt = enabled
 	c.UpdateConfig()
 }
 
 // 更新配置
 func (c *Context) UpdateConfig() {
+
 	pconf := conf.ProcessConfig{
 		Type:        "wechat",
 		Account:     c.Account,
@@ -190,6 +249,41 @@ func (c *Context) UpdateConfig() {
 		HTTPEnabled: c.HTTPEnabled,
 		HTTPAddr:    c.HTTPAddr,
 	}
-	conf := c.conf.GetConfig()
-	conf.UpdateHistory(c.Account, pconf)
+
+	if c.conf.History == nil {
+		c.conf.History = make([]conf.ProcessConfig, 0)
+	}
+	if len(c.conf.History) == 0 {
+		c.conf.History = append(c.conf.History, pconf)
+	} else {
+		isFind := false
+		for i, v := range c.conf.History {
+			if v.Account == c.Account {
+				isFind = true
+				c.conf.History[i] = pconf
+				break
+			}
+		}
+		if !isFind {
+			c.conf.History = append(c.conf.History, pconf)
+		}
+	}
+
+	if err := c.cm.SetConfig("last_account", c.Account); err != nil {
+		log.Error().Err(err).Msg("set last_account failed")
+		return
+	}
+
+	if err := c.cm.SetConfig("history", c.conf.History); err != nil {
+		log.Error().Err(err).Msg("set history failed")
+		return
+	}
+
+	if len(pconf.DataDir) != 0 {
+		if b, err := json.Marshal(pconf); err == nil {
+			if err := os.WriteFile(filepath.Join(pconf.DataDir, "chatlog.json"), b, 0644); err != nil {
+				log.Error().Err(err).Msg("save chatlog.json failed")
+			}
+		}
+	}
 }

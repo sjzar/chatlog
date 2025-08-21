@@ -19,6 +19,7 @@ package config
 import (
 	"errors"
 	"os"
+	"strings"
 
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/viper"
@@ -29,103 +30,111 @@ const (
 )
 
 var (
-	// ConfigName holds the name of the configuration file.
-	ConfigName = ""
-
-	// ConfigType specifies the type/format of the configuration file.
-	ConfigType = ""
-
-	// ConfigPath denotes the path to the configuration file.
-	ConfigPath = ""
-
 	// ERROR
 	ErrInvalidDirectory  = errors.New("invalid directory path")
 	ErrMissingConfigName = errors.New("config name not specified")
 )
 
-// Init initializes the configuration settings.
+type Manager struct {
+	App         string
+	EnvPrefix   string
+	Path        string
+	Name        string
+	WriteConfig bool
+
+	Viper *viper.Viper
+}
+
+// New initializes the configuration settings.
 // It sets up the name, type, and path for the configuration file.
-func Init(name, _type, path string) error {
-	if len(name) == 0 {
-		return ErrMissingConfigName
+func New(app, path, name, envPrefix string, writeConfig bool) (*Manager, error) {
+	if len(app) == 0 {
+		return nil, ErrMissingConfigName
 	}
 
-	if len(_type) == 0 {
-		_type = DefaultConfigType
-	}
-
+	v := viper.New()
+	v.SetConfigType(DefaultConfigType)
 	var err error
+
+	// Path
 	if len(path) == 0 {
 		path, err = os.UserHomeDir()
 		if err != nil {
 			path = os.TempDir()
 		}
-		path += string(os.PathSeparator) + "." + name
+		path += string(os.PathSeparator) + "." + app
 	}
 	if err := PrepareDir(path); err != nil {
-		return err
+		return nil, err
+	}
+	v.AddConfigPath(path)
+
+	// Name
+	if len(name) == 0 {
+		name = app
+	}
+	v.SetConfigName(name)
+
+	// Env
+	if len(envPrefix) != 0 {
+		v.SetEnvPrefix(strings.ToUpper(app))
+		v.AutomaticEnv()
+		v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	}
 
-	ConfigName = name
-	ConfigType = _type
-	ConfigPath = path
-	return nil
+	return &Manager{
+		App:       app,
+		EnvPrefix: envPrefix,
+		Path:      path,
+		Name:      name,
+		Viper:     v,
+	}, nil
 }
 
 // Load loads the configuration from the previously initialized file.
 // It unmarshals the configuration into the provided conf interface.
-func Load(conf interface{}) error {
-	viper.SetConfigName(ConfigName)
-	viper.SetConfigType(ConfigType)
-	viper.AddConfigPath(ConfigPath)
-	if err := viper.ReadInConfig(); err != nil {
-		if err := viper.SafeWriteConfig(); err != nil {
-			return err
+func (c *Manager) Load(conf interface{}) error {
+	if err := c.Viper.ReadInConfig(); err != nil {
+		if c.WriteConfig {
+			if err := c.Viper.SafeWriteConfig(); err != nil {
+				return err
+			}
 		}
 	}
-	if err := viper.Unmarshal(conf); err != nil {
+	if err := c.Viper.Unmarshal(conf, decoderConfig()); err != nil {
 		return err
 	}
-	SetDefault(conf)
 	return nil
 }
 
 // LoadFile loads the configuration from a specified file.
 // It unmarshals the configuration into the provided conf interface.
-func LoadFile(file string, conf interface{}) error {
-	viper.SetConfigFile(file)
-	if err := viper.ReadInConfig(); err != nil {
+func (c *Manager) LoadFile(file string, conf interface{}) error {
+	c.Viper.SetConfigFile(file)
+	if err := c.Viper.ReadInConfig(); err != nil {
 		return err
 	}
-	if err := viper.Unmarshal(conf); err != nil {
+	if err := c.Viper.Unmarshal(conf, decoderConfig()); err != nil {
 		return err
 	}
-	SetDefault(conf)
 	return nil
 }
 
 // SetConfig sets a configuration key to a specified value.
 // It also writes the updated configuration back to the file.
-func SetConfig(key string, value interface{}) error {
-	viper.Set(key, value)
-	if err := viper.WriteConfig(); err != nil {
-		return err
+func (c *Manager) SetConfig(key string, value interface{}) error {
+	c.Viper.Set(key, value)
+	if c.WriteConfig {
+		if err := c.Viper.WriteConfig(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-// ResetConfig resets the configuration to empty.
-func ResetConfig() error {
-	viper.Reset()
-	viper.SetConfigName(ConfigName)
-	viper.SetConfigType(ConfigType)
-	viper.AddConfigPath(ConfigPath)
-	return viper.WriteConfig()
-}
-
 // GetConfig retrieves all configuration settings as a map.
-func GetConfig() map[string]interface{} {
-	return viper.AllSettings()
+func (c *Manager) GetConfig() map[string]interface{} {
+	return c.Viper.AllSettings()
 }
 
 // PrepareDir ensures that the specified directory path exists.

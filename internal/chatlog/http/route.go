@@ -30,6 +30,9 @@ func (s *Service) initRouter() {
 	router.StaticFS("/static", http.FS(staticDir))
 	router.StaticFileFS("/favicon.ico", "./favicon.ico", http.FS(staticDir))
 	router.StaticFileFS("/", "./index.htm", http.FS(staticDir))
+	router.GET("/health", func(ctx *gin.Context) {
+		ctx.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
 
 	// Media
 	router.GET("/image/*key", s.GetImage)
@@ -48,7 +51,7 @@ func (s *Service) initRouter() {
 	}
 
 	// API V1 Router
-	api := router.Group("/api/v1")
+	api := router.Group("/api/v1", s.checkDBStateMiddleware())
 	{
 		api.GET("/chatlog", s.GetChatlog)
 		api.GET("/contact", s.GetContacts)
@@ -296,7 +299,7 @@ func (s *Service) GetMedia(c *gin.Context, _type string) {
 	var _err error
 	for _, k := range keys {
 		if len(k) != 32 {
-			absolutePath := filepath.Join(s.ctx.DataDir, k)
+			absolutePath := filepath.Join(s.conf.GetDataDir(), k)
 			if _, err := os.Stat(absolutePath); os.IsNotExist(err) {
 				continue
 			}
@@ -331,7 +334,7 @@ func (s *Service) GetMedia(c *gin.Context, _type string) {
 func (s *Service) GetMediaData(c *gin.Context) {
 	relativePath := filepath.Clean(c.Param("path"))
 
-	absolutePath := filepath.Join(s.ctx.DataDir, relativePath)
+	absolutePath := filepath.Join(s.conf.GetDataDir(), relativePath)
 
 	if _, err := os.Stat(absolutePath); os.IsNotExist(err) {
 		c.JSON(http.StatusNotFound, gin.H{

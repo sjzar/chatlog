@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sjzar/chatlog/internal/chatlog/ctx"
 	"github.com/sjzar/chatlog/internal/chatlog/database"
 	"github.com/sjzar/chatlog/internal/mcp"
 	"github.com/sjzar/chatlog/pkg/util"
@@ -18,16 +17,14 @@ import (
 )
 
 type Service struct {
-	ctx *ctx.Context
-	db  *database.Service
+	db *database.Service
 
 	mcp *mcp.MCP
 }
 
-func NewService(ctx *ctx.Context, db *database.Service) *Service {
+func NewService(db *database.Service) *Service {
 	return &Service{
-		ctx: ctx,
-		db:  db,
+		db: db,
 	}
 }
 

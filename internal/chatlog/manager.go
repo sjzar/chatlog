@@ -3,7 +3,7 @@ package chatlog
 import (
 	"context"
 	"fmt"
-	"path/filepath"
+	"os"
 	"strings"
 
 	"github.com/rs/zerolog/log"
@@ -14,14 +14,16 @@ import (
 	"github.com/sjzar/chatlog/internal/chatlog/mcp"
 	"github.com/sjzar/chatlog/internal/chatlog/wechat"
 	iwechat "github.com/sjzar/chatlog/internal/wechat"
+	"github.com/sjzar/chatlog/pkg/config"
 	"github.com/sjzar/chatlog/pkg/util"
 	"github.com/sjzar/chatlog/pkg/util/dat2img"
 )
 
 // Manager 管理聊天日志应用
 type Manager struct {
-	conf *conf.Service
-	ctx  *ctx.Context
+	ctx *ctx.Context
+	sc  *conf.ServerConfig
+	scm *config.Manager
 
 	// Services
 	db     *database.Service
@@ -33,36 +35,25 @@ type Manager struct {
 	app *App
 }
 
-func New(configPath string) (*Manager, error) {
-
-	// 创建配置服务
-	conf, err := conf.NewService(configPath)
-	if err != nil {
-		return nil, err
-	}
-
-	// 创建应用上下文
-	ctx := ctx.New(conf)
-
-	wechat := wechat.NewService(ctx)
-
-	db := database.NewService(ctx)
-
-	mcp := mcp.NewService(ctx, db)
-
-	http := http.NewService(ctx, db, mcp)
-
-	return &Manager{
-		conf:   conf,
-		ctx:    ctx,
-		db:     db,
-		mcp:    mcp,
-		http:   http,
-		wechat: wechat,
-	}, nil
+func New() *Manager {
+	return &Manager{}
 }
 
-func (m *Manager) Run() error {
+func (m *Manager) Run(configPath string) error {
+
+	var err error
+	m.ctx, err = ctx.New(configPath)
+	if err != nil {
+		return err
+	}
+
+	m.wechat = wechat.NewService(m.ctx)
+
+	m.db = database.NewService(m.ctx)
+
+	m.mcp = mcp.NewService(m.db)
+
+	m.http = http.NewService(m.ctx, m.db, m.mcp)
 
 	m.ctx.WeChatInstances = m.wechat.GetWeChatInstances()
 	if len(m.ctx.WeChatInstances) >= 1 {
@@ -263,52 +254,91 @@ func (m *Manager) RefreshSession() error {
 	return nil
 }
 
-func (m *Manager) CommandKey(pid int) (string, error) {
-	instances := m.wechat.GetWeChatInstances()
-	if len(instances) == 0 {
+func (m *Manager) CommandKey(configPath string, pid int, force bool, showXorKey bool) (string, error) {
+
+	var err error
+	m.ctx, err = ctx.New(configPath)
+	if err != nil {
+		return "", err
+	}
+
+	m.wechat = wechat.NewService(m.ctx)
+
+	m.ctx.WeChatInstances = m.wechat.GetWeChatInstances()
+	if len(m.ctx.WeChatInstances) == 0 {
 		return "", fmt.Errorf("wechat process not found")
 	}
-	if len(instances) == 1 {
-		key, _, err := instances[0].GetKey(context.Background())
-		if err != nil {
-			return "", err
+
+	if len(m.ctx.WeChatInstances) == 1 {
+		key, imgKey := m.ctx.DataKey, m.ctx.ImgKey
+		if len(key) == 0 || len(imgKey) == 0 || force {
+			key, imgKey, err = m.ctx.WeChatInstances[0].GetKey(context.Background())
+			if err != nil {
+				return "", err
+			}
+			m.ctx.Refresh()
+			m.ctx.UpdateConfig()
 		}
-		return key, nil
+
+		result := fmt.Sprintf("Data Key: [%s]\nImage Key: [%s]", key, imgKey)
+		if m.ctx.Version == 4 && showXorKey {
+			if b, err := dat2img.ScanAndSetXorKey(m.ctx.DataDir); err == nil {
+				result += fmt.Sprintf("\nXor Key: [0x%X]", b)
+			}
+		}
+
+		return result, nil
 	}
 	if pid == 0 {
 		str := "Select a process:\n"
-		for _, ins := range instances {
+		for _, ins := range m.ctx.WeChatInstances {
 			str += fmt.Sprintf("PID: %d. %s[Version: %s Data Dir: %s ]\n", ins.PID, ins.Name, ins.FullVersion, ins.DataDir)
 		}
 		return str, nil
 	}
-	for _, ins := range instances {
+	for _, ins := range m.ctx.WeChatInstances {
 		if ins.PID == uint32(pid) {
-			key, _, err := ins.GetKey(context.Background())
-			if err != nil {
-				return "", err
+			key, imgKey := ins.Key, ins.ImgKey
+			if len(key) == 0 || len(imgKey) == 0 || force {
+				key, imgKey, err = ins.GetKey(context.Background())
+				if err != nil {
+					return "", err
+				}
+				m.ctx.Refresh()
+				m.ctx.UpdateConfig()
 			}
-			return key, nil
+			result := fmt.Sprintf("Data Key: [%s]\nImage Key: [%s]", key, imgKey)
+			if m.ctx.Version == 4 && showXorKey {
+				if b, err := dat2img.ScanAndSetXorKey(m.ctx.DataDir); err == nil {
+					result += fmt.Sprintf("\nXor Key: [0x%X]", b)
+				}
+			}
+			return result, nil
 		}
 	}
 	return "", fmt.Errorf("wechat process not found")
 }
 
-func (m *Manager) CommandDecrypt(dataDir string, workDir string, key string, platform string, version int) error {
-	if dataDir == "" {
+func (m *Manager) CommandDecrypt(configPath string, cmdConf map[string]any) error {
+
+	var err error
+	m.sc, m.scm, err = conf.LoadServiceConfig(configPath, cmdConf)
+	if err != nil {
+		return err
+	}
+
+	dataDir := m.sc.GetDataDir()
+	if len(dataDir) == 0 {
 		return fmt.Errorf("dataDir is required")
 	}
-	if key == "" {
-		return fmt.Errorf("key is required")
+
+	dataKey := m.sc.GetDataKey()
+	if len(dataKey) == 0 {
+		return fmt.Errorf("dataKey is required")
 	}
-	if workDir == "" {
-		workDir = util.DefaultWorkDir(filepath.Base(filepath.Dir(dataDir)))
-	}
-	m.ctx.DataDir = dataDir
-	m.ctx.WorkDir = workDir
-	m.ctx.DataKey = key
-	m.ctx.Platform = platform
-	m.ctx.Version = version
+
+	m.wechat = wechat.NewService(m.sc)
+
 	if err := m.wechat.DecryptDBFiles(); err != nil {
 		return err
 	}
@@ -316,43 +346,83 @@ func (m *Manager) CommandDecrypt(dataDir string, workDir string, key string, pla
 	return nil
 }
 
-func (m *Manager) CommandHTTPServer(addr string, dataDir string, workDir string, platform string, version int) error {
+func (m *Manager) CommandHTTPServer(configPath string, cmdConf map[string]any) error {
 
-	if addr == "" {
-		addr = "127.0.0.1:5030"
-	}
-
-	if workDir == "" {
-		return fmt.Errorf("workDir is required")
-	}
-
-	if platform == "" {
-		return fmt.Errorf("platform is required")
-	}
-
-	if version == 0 {
-		return fmt.Errorf("version is required")
-	}
-
-	m.ctx.HTTPAddr = addr
-	m.ctx.DataDir = dataDir
-	m.ctx.WorkDir = workDir
-	m.ctx.Platform = platform
-	m.ctx.Version = version
-
-	// 如果是 4.0 版本，更新下 xorkey
-	if m.ctx.Version == 4 && m.ctx.DataDir != "" {
-		go dat2img.ScanAndSetXorKey(m.ctx.DataDir)
-	}
-
-	// 按依赖顺序启动服务
-	if err := m.db.Start(); err != nil {
+	var err error
+	m.sc, m.scm, err = conf.LoadServiceConfig(configPath, cmdConf)
+	if err != nil {
 		return err
 	}
+
+	dataDir := m.sc.GetDataDir()
+	workDir := m.sc.GetWorkDir()
+	if len(dataDir) == 0 && len(workDir) == 0 {
+		return fmt.Errorf("dataDir or workDir is required")
+	}
+
+	dataKey := m.sc.GetDataKey()
+	if len(dataKey) == 0 {
+		return fmt.Errorf("dataKey is required")
+	}
+
+	// 如果是 4.0 版本，处理图片密钥
+	version := m.sc.GetVersion()
+	if version == 4 && len(dataDir) != 0 {
+		dat2img.SetAesKey(m.sc.GetImgKey())
+		go dat2img.ScanAndSetXorKey(dataDir)
+	}
+
+	log.Info().Msgf("server config: %+v", m.sc)
+
+	m.wechat = wechat.NewService(m.sc)
+
+	m.db = database.NewService(m.sc)
+
+	m.mcp = mcp.NewService(m.db)
+
+	m.http = http.NewService(m.sc, m.db, m.mcp)
+
+	if m.sc.GetAutoDecrypt() {
+		if err := m.wechat.StartAutoDecrypt(); err != nil {
+			return err
+		}
+		log.Info().Msg("auto decrypt is enabled")
+	}
+
+	// init db
+	go func() {
+		// 如果工作目录为空，则解密数据
+		if entries, err := os.ReadDir(workDir); err == nil && len(entries) == 0 {
+			log.Info().Msgf("work dir is empty, decrypt data.")
+			m.db.SetDecrypting()
+			if err := m.wechat.DecryptDBFiles(); err != nil {
+				log.Info().Msgf("decrypt data failed: %v", err)
+				return
+			}
+			log.Info().Msg("decrypt data success")
+		}
+
+		// 按依赖顺序启动服务
+		if err := m.db.Start(); err != nil {
+			log.Info().Msgf("start db failed, try to decrypt data.")
+			m.db.SetDecrypting()
+			if err := m.wechat.DecryptDBFiles(); err != nil {
+				log.Info().Msgf("decrypt data failed: %v", err)
+				return
+			}
+			log.Info().Msg("decrypt data success")
+			if err := m.db.Start(); err != nil {
+				log.Info().Msgf("start db failed: %v", err)
+				m.db.SetError(err.Error())
+				return
+			}
+		}
+	}()
 
 	if err := m.mcp.Start(); err != nil {
 		return err
 	}
+	defer m.mcp.Stop()
 
 	return m.http.ListenAndServe()
 }

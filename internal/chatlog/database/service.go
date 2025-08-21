@@ -3,27 +3,42 @@ package database
 import (
 	"time"
 
-	"github.com/sjzar/chatlog/internal/chatlog/ctx"
 	"github.com/sjzar/chatlog/internal/model"
 	"github.com/sjzar/chatlog/internal/wechatdb"
 )
 
+const (
+	StateInit = iota
+	StateDecrypting
+	StateReady
+	StateError
+)
+
 type Service struct {
-	ctx *ctx.Context
-	db  *wechatdb.DB
+	State    int
+	StateMsg string
+	conf     Config
+	db       *wechatdb.DB
 }
 
-func NewService(ctx *ctx.Context) *Service {
+type Config interface {
+	GetWorkDir() string
+	GetPlatform() string
+	GetVersion() int
+}
+
+func NewService(conf Config) *Service {
 	return &Service{
-		ctx: ctx,
+		conf: conf,
 	}
 }
 
 func (s *Service) Start() error {
-	db, err := wechatdb.New(s.ctx.WorkDir, s.ctx.Platform, s.ctx.Version)
+	db, err := wechatdb.New(s.conf.GetWorkDir(), s.conf.GetPlatform(), s.conf.GetVersion())
 	if err != nil {
 		return err
 	}
+	s.SetReady()
 	s.db = db
 	return nil
 }
@@ -32,8 +47,26 @@ func (s *Service) Stop() error {
 	if s.db != nil {
 		s.db.Close()
 	}
+	s.SetInit()
 	s.db = nil
 	return nil
+}
+
+func (s *Service) SetInit() {
+	s.State = StateInit
+}
+
+func (s *Service) SetDecrypting() {
+	s.State = StateDecrypting
+}
+
+func (s *Service) SetReady() {
+	s.State = StateReady
+}
+
+func (s *Service) SetError(msg string) {
+	s.State = StateError
+	s.StateMsg = msg
 }
 
 func (s *Service) GetDB() *wechatdb.DB {
