@@ -4,6 +4,7 @@ go 1.24.0
 
 require (
 	github.com/Eyevinn/mp4ff v0.49.0
+	github.com/cespare/xxhash v1.1.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/gdamore/tcell/v2 v2.8.1
 	github.com/gin-gonic/gin v1.10.1

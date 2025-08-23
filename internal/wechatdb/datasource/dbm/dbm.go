@@ -2,6 +2,7 @@ package dbm
 
 import (
 	"database/sql"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"time"
@@ -17,6 +18,7 @@ import (
 
 type DBManager struct {
 	path    string
+	id      string
 	fm      *filemonitor.FileMonitor
 	fgs     map[string]*filemonitor.FileGroup
 	dbs     map[string]*sql.DB
@@ -27,6 +29,7 @@ type DBManager struct {
 func NewDBManager(path string) *DBManager {
 	return &DBManager{
 		path:    path,
+		id:      filepath.Base(path),
 		fm:      filemonitor.NewFileMonitor(),
 		fgs:     make(map[string]*filemonitor.FileGroup),
 		dbs:     make(map[string]*sql.DB),
@@ -118,7 +121,7 @@ func (d *DBManager) OpenDB(path string) (*sql.DB, error) {
 	var err error
 	tempPath := path
 	if runtime.GOOS == "windows" {
-		tempPath, err = filecopy.GetTempCopy(path)
+		tempPath, err = filecopy.GetTempCopy(d.id, path)
 		if err != nil {
 			log.Err(err).Msgf("获取临时拷贝文件 %s 失败", path)
 			return nil, err
