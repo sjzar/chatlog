@@ -300,11 +300,10 @@ func (s *Service) GetMedia(c *gin.Context, _type string) {
 	for _, k := range keys {
 		if len(k) != 32 {
 			absolutePath := filepath.Join(s.conf.GetDataDir(), k)
-			if _, err := os.Stat(absolutePath); os.IsNotExist(err) {
-				continue
+			if _, err := os.Stat(absolutePath); err == nil {
+				c.Redirect(http.StatusFound, "/data/"+k)
+				return
 			}
-			c.Redirect(http.StatusFound, "/data/"+k)
-			return
 		}
 		media, err := s.db.GetMedia(_type, k)
 		if err != nil {
