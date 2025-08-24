@@ -2,6 +2,7 @@ package http
 
 import (
 	"embed"
+	"encoding/csv"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -124,6 +125,18 @@ func (s *Service) handleChatlog(c *gin.Context) {
 
 	switch strings.ToLower(q.Format) {
 	case "csv":
+		c.Writer.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		c.Writer.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s_%s_%s.csv", q.Talker, start.Format("2006-01-02"), end.Format("2006-01-02")))
+		c.Writer.Header().Set("Cache-Control", "no-cache")
+		c.Writer.Header().Set("Connection", "keep-alive")
+		c.Writer.Flush()
+
+		csvWriter := csv.NewWriter(c.Writer)
+		csvWriter.Write([]string{"Time", "SenderName", "Sender", "TalkerName", "Talker", "Content"})
+		for _, m := range messages {
+			csvWriter.Write(m.CSV(c.Request.Host))
+		}
+		csvWriter.Flush()
 	case "json":
 		// json
 		c.JSON(http.StatusOK, messages)

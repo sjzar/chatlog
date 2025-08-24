@@ -379,3 +379,15 @@ func (m *Message) PlainTextContent() string {
 		return fmt.Sprintf("Type: %d Content: %s", m.Type, content)
 	}
 }
+
+func (m *Message) CSV(host string) []string {
+	m.SetContent("host", host)
+	return []string{
+		m.Time.Format("2006-01-02 15:04:05"),
+		m.SenderName,
+		m.Sender,
+		m.TalkerName,
+		m.Talker,
+		m.PlainTextContent(),
+	}
+}
