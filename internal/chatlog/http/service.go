@@ -5,21 +5,24 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/sjzar/chatlog/internal/chatlog/database"
-	"github.com/sjzar/chatlog/internal/chatlog/mcp"
-	"github.com/sjzar/chatlog/internal/errors"
-
 	"github.com/gin-gonic/gin"
+	"github.com/mark3labs/mcp-go/server"
 	"github.com/rs/zerolog/log"
+
+	"github.com/sjzar/chatlog/internal/chatlog/database"
+	"github.com/sjzar/chatlog/internal/errors"
 )
 
 type Service struct {
 	conf Config
 	db   *database.Service
-	mcp  *mcp.Service
 
 	router *gin.Engine
 	server *http.Server
+
+	mcpServer           *server.MCPServer
+	mcpSSEServer        *server.SSEServer
+	mcpStreamableServer *server.StreamableHTTPServer
 }
 
 type Config interface {
@@ -27,7 +30,7 @@ type Config interface {
 	GetDataDir() string
 }
 
-func NewService(conf Config, db *database.Service, mcp *mcp.Service) *Service {
+func NewService(conf Config, db *database.Service) *Service {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 
@@ -47,10 +50,10 @@ func NewService(conf Config, db *database.Service, mcp *mcp.Service) *Service {
 	s := &Service{
 		conf:   conf,
 		db:     db,
-		mcp:    mcp,
 		router: router,
 	}
 
+	s.initMCPServer()
 	s.initRouter()
 	return s
 }
