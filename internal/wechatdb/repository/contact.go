@@ -5,17 +5,14 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/rs/zerolog/log"
+
 	"github.com/sjzar/chatlog/internal/errors"
 	"github.com/sjzar/chatlog/internal/model"
 )
 
 // initContactCache 初始化联系人缓存
 func (r *Repository) initContactCache(ctx context.Context) error {
-	// 加载所有联系人到缓存
-	contacts, err := r.ds.GetContacts(ctx, "", 0, 0)
-	if err != nil {
-		return err
-	}
 
 	contactMap := make(map[string]*model.Contact)
 	aliasMap := make(map[string][]*model.Contact)
@@ -27,6 +24,13 @@ func (r *Repository) initContactCache(ctx context.Context) error {
 	aliasList := make([]string, 0)
 	remarkList := make([]string, 0)
 	nickNameList := make([]string, 0)
+
+	// 加载所有联系人到缓存
+	// 暂时忽略获取不到联系人的错误
+	contacts, err := r.ds.GetContacts(ctx, "", 0, 0)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to load contacts")
+	}
 
 	for _, contact := range contacts {
 		contactMap[contact.UserName] = contact

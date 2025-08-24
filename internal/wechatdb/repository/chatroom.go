@@ -5,17 +5,14 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/rs/zerolog/log"
+
 	"github.com/sjzar/chatlog/internal/errors"
 	"github.com/sjzar/chatlog/internal/model"
 )
 
 // initChatRoomCache 初始化群聊缓存
 func (r *Repository) initChatRoomCache(ctx context.Context) error {
-	// 加载所有群聊到缓存
-	chatRooms, err := r.ds.GetChatRooms(ctx, "", 0, 0)
-	if err != nil {
-		return err
-	}
 
 	chatRoomMap := make(map[string]*model.ChatRoom)
 	remarkToChatRoom := make(map[string][]*model.ChatRoom)
@@ -23,6 +20,13 @@ func (r *Repository) initChatRoomCache(ctx context.Context) error {
 	chatRoomList := make([]string, 0)
 	chatRoomRemark := make([]string, 0)
 	chatRoomNickName := make([]string, 0)
+
+	// 加载所有群聊到缓存
+	// 暂时忽略获取不到群聊的错误
+	chatRooms, err := r.ds.GetChatRooms(ctx, "", 0, 0)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to load chat rooms")
+	}
 
 	for _, chatRoom := range chatRooms {
 		// 补充群聊信息（从联系人中获取 Remark 和 NickName）

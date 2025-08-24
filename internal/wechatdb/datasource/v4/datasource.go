@@ -162,6 +162,10 @@ func (ds *DataSource) initMessageDbs() error {
 			infos[i].EndTime = infos[i+1].StartTime
 		}
 	}
+	if len(ds.messageInfos) > 0 && len(infos) < len(ds.messageInfos) {
+		log.Warn().Msgf("message db count decreased from %d to %d, skip init", len(ds.messageInfos), len(infos))
+		return nil
+	}
 	ds.messageInfos = infos
 	return nil
 }
@@ -603,10 +607,20 @@ func (ds *DataSource) GetMedia(ctx context.Context, _type string, key string) (*
 	switch _type {
 	case "image":
 		table = "image_hardlink_info_v3"
+		// 4.1.0 版本开始使用 v4 表
+		if !ds.IsExist(Media, table) {
+			table = "image_hardlink_info_v4"
+		}
 	case "video":
 		table = "video_hardlink_info_v3"
+		if !ds.IsExist(Media, table) {
+			table = "video_hardlink_info_v4"
+		}
 	case "file":
 		table = "file_hardlink_info_v3"
+		if !ds.IsExist(Media, table) {
+			table = "file_hardlink_info_v4"
+		}
 	case "voice":
 		return ds.GetVoice(ctx, key)
 	default:
@@ -659,8 +673,8 @@ func (ds *DataSource) GetMedia(ctx context.Context, _type string, key string) (*
 		mediaV4.Type = _type
 		media = mediaV4.Wrap()
 
-		// 跳过缩略图
-		if _type == "image" && !strings.Contains(media.Name, "_t") {
+		// 优先返回高清图
+		if _type == "image" && strings.HasSuffix(mediaV4.Name, "_h.dat") {
 			break
 		}
 	}
@@ -670,6 +684,22 @@ func (ds *DataSource) GetMedia(ctx context.Context, _type string, key string) (*
 	}
 
 	return media, nil
+}
+
+func (ds *DataSource) IsExist(_db string, table string) bool {
+	db, err := ds.dbm.GetDB(_db)
+	if err != nil {
+		return false
+	}
+	var tableName string
+	query := "SELECT name FROM sqlite_master WHERE type='table' AND name=?;"
+	if err = db.QueryRow(query, table).Scan(&tableName); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false
+		}
+		return false
+	}
+	return true
 }
 
 func (ds *DataSource) GetVoice(ctx context.Context, key string) (*model.Media, error) {

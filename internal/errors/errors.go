@@ -118,3 +118,7 @@ func Err(c *gin.Context, err error) {
 
 	c.JSON(http.StatusInternalServerError, err.Error())
 }
+
+func Is(err, target error) bool {
+	return errors.Is(err, target)
+}

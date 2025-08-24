@@ -307,10 +307,9 @@ func (s *Service) handleMedia(c *gin.Context, _type string) {
 
 	var _err error
 	for _, k := range keys {
-		if len(k) != 32 {
-			absolutePath := filepath.Join(s.conf.GetDataDir(), k)
-			if _, err := os.Stat(absolutePath); err == nil {
-				c.Redirect(http.StatusFound, "/data/"+k)
+		if strings.Contains(k, "/") {
+			if absolutePath, err := s.findPath(_type, k); err == nil {
+				c.Redirect(http.StatusFound, "/data/"+absolutePath)
 				return
 			}
 		}
@@ -337,6 +336,28 @@ func (s *Service) handleMedia(c *gin.Context, _type string) {
 		errors.Err(c, _err)
 		return
 	}
+}
+
+func (s *Service) findPath(_type string, key string) (string, error) {
+	absolutePath := filepath.Join(s.conf.GetDataDir(), key)
+	if _, err := os.Stat(absolutePath); err == nil {
+		return key, nil
+	}
+	switch _type {
+	case "image":
+		for _, suffix := range []string{"_h.dat", ".dat", "_t.dat"} {
+			if _, err := os.Stat(absolutePath + suffix); err == nil {
+				return key + suffix, nil
+			}
+		}
+	case "video":
+		for _, suffix := range []string{".mp4", "_thumb.jpg"} {
+			if _, err := os.Stat(absolutePath + suffix); err == nil {
+				return key + suffix, nil
+			}
+		}
+	}
+	return "", errors.ErrMediaNotFound
 }
 
 func (s *Service) handleMediaData(c *gin.Context) {

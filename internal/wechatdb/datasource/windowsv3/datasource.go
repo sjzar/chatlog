@@ -56,7 +56,7 @@ var Groups = []*dbm.Group{
 	},
 	{
 		Name:      Voice,
-		Pattern:   `^MediaMSG([0-9])?\.db$`,
+		Pattern:   `^MediaMSG([0-9]?[0-9])?\.db$`,
 		BlackList: []string{},
 	},
 }
@@ -206,6 +206,10 @@ func (ds *DataSource) initMessageDbs() error {
 		} else {
 			infos[i].EndTime = infos[i+1].StartTime
 		}
+	}
+	if len(ds.messageInfos) > 0 && len(infos) < len(ds.messageInfos) {
+		log.Warn().Msgf("message db count decreased from %d to %d, skip init", len(ds.messageInfos), len(infos))
+		return nil
 	}
 	ds.messageInfos = infos
 	return nil
