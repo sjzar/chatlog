@@ -363,6 +363,39 @@ func (ds *DataSource) GetMessages(ctx context.Context, startTime, endTime time.T
 	return filteredMessages, nil
 }
 
+func (ds *DataSource) findContactsByUserNames(ctx context.Context, usernames []string) (map[string]*model.Contact, error) {
+	query := fmt.Sprintf(
+		"SELECT username, local_type, alias, remark, nick_name FROM contact WHERE username in ('%s')",
+		strings.Join(usernames, "', '"),
+	)
+	db, err := ds.dbm.GetDB(Contact)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, errors.QueryFailed(query, err)
+	}
+	defer rows.Close()
+
+	ret := make(map[string]*model.Contact)
+	for rows.Next() {
+		var contactV4 model.ContactV4
+		err := rows.Scan(
+			&contactV4.UserName,
+			&contactV4.LocalType,
+			&contactV4.Alias,
+			&contactV4.Remark,
+			&contactV4.NickName,
+		)
+		if err != nil {
+			return nil, errors.ScanRowFailed(err)
+		}
+		ret[contactV4.UserName] = contactV4.Wrap()
+	}
+	return ret, nil
+}
+
 // 联系人
 func (ds *DataSource) GetContacts(ctx context.Context, key string, limit, offset int) ([]*model.Contact, error) {
 	var query string
@@ -578,6 +611,8 @@ func (ds *DataSource) GetSessions(ctx context.Context, key string, limit, offset
 	defer rows.Close()
 
 	sessions := []*model.Session{}
+	usernames := make([]string, 0)
+
 	for rows.Next() {
 		var sessionV4 model.SessionV4
 		err := rows.Scan(
@@ -591,8 +626,26 @@ func (ds *DataSource) GetSessions(ctx context.Context, key string, limit, offset
 		if err != nil {
 			return nil, errors.ScanRowFailed(err)
 		}
+		session := sessionV4.Wrap()
+		sessions = append(sessions, session)
+		usernames = append(usernames, session.UserName)
+	}
 
-		sessions = append(sessions, sessionV4.Wrap())
+	// 发现一些v4下last_sender_display_name可能为空，
+	if len(usernames) > 0 && len(sessions) > 0 {
+		contact_map, _ := ds.findContactsByUserNames(ctx, usernames)
+		for _, session := range sessions {
+			contact := contact_map[session.UserName]
+			if contact == nil {
+				continue
+			}
+			if contact.Remark != "" {
+				session.NickName = contact.Remark
+			} else {
+				session.NickName = contact.NickName
+			}
+		}
+
 	}
 
 	return sessions, nil
