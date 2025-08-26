@@ -48,7 +48,7 @@ func getDecryptConfig() map[string]any {
 		cmdConf["data_dir"] = decryptDataDir
 	}
 	if len(decryptDatakey) != 0 {
-		cmdConf["data_key"] = serverDataKey
+		cmdConf["data_key"] = decryptDatakey
 	}
 	if len(decryptWorkDir) != 0 {
 		cmdConf["work_dir"] = decryptWorkDir
