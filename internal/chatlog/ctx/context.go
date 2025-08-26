@@ -181,6 +181,10 @@ func (c *Context) GetHTTPAddr() string {
 	return c.HTTPAddr
 }
 
+func (c *Context) GetWebhook() *conf.Webhook {
+	return c.conf.Webhook
+}
+
 func (c *Context) SetHTTPEnabled(enabled bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

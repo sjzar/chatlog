@@ -105,11 +105,11 @@ func New(path string) (*DataSource, error) {
 	return ds, nil
 }
 
-func (ds *DataSource) SetCallback(name string, callback func(event fsnotify.Event) error) error {
-	if name == "chatroom" {
-		name = Contact
+func (ds *DataSource) SetCallback(group string, callback func(event fsnotify.Event) error) error {
+	if group == "chatroom" {
+		group = Contact
 	}
-	return ds.dbm.AddCallback(name, callback)
+	return ds.dbm.AddCallback(group, callback)
 }
 
 func (ds *DataSource) initMessageDbs() error {
@@ -157,7 +157,7 @@ func (ds *DataSource) initMessageDbs() error {
 	// 设置结束时间
 	for i := range infos {
 		if i == len(infos)-1 {
-			infos[i].EndTime = time.Now()
+			infos[i].EndTime = time.Now().Add(time.Hour)
 		} else {
 			infos[i].EndTime = infos[i+1].StartTime
 		}

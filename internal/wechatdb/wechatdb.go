@@ -4,11 +4,12 @@ import (
 	"context"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
+	_ "github.com/mattn/go-sqlite3"
+
 	"github.com/sjzar/chatlog/internal/model"
 	"github.com/sjzar/chatlog/internal/wechatdb/datasource"
 	"github.com/sjzar/chatlog/internal/wechatdb/repository"
-
-	_ "github.com/mattn/go-sqlite3"
 )
 
 type DB struct {
@@ -123,4 +124,8 @@ func (w *DB) GetSessions(key string, limit, offset int) (*GetSessionsResp, error
 
 func (w *DB) GetMedia(_type string, key string) (*model.Media, error) {
 	return w.repo.GetMedia(context.Background(), _type, key)
+}
+
+func (w *DB) SetCallback(group string, callback func(event fsnotify.Event) error) error {
+	return w.ds.SetCallback(group, callback)
 }

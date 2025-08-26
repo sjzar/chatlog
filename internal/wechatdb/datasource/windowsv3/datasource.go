@@ -111,11 +111,11 @@ func New(path string) (*DataSource, error) {
 	return ds, nil
 }
 
-func (ds *DataSource) SetCallback(name string, callback func(event fsnotify.Event) error) error {
-	if name == "chatroom" {
-		name = Contact
+func (ds *DataSource) SetCallback(group string, callback func(event fsnotify.Event) error) error {
+	if group == "chatroom" {
+		group = Contact
 	}
-	return ds.dbm.AddCallback(name, callback)
+	return ds.dbm.AddCallback(group, callback)
 }
 
 // initMessageDbs 初始化消息数据库

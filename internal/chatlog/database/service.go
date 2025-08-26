@@ -1,8 +1,13 @@
 package database
 
 import (
+	"context"
 	"time"
 
+	"github.com/rs/zerolog/log"
+
+	"github.com/sjzar/chatlog/internal/chatlog/conf"
+	"github.com/sjzar/chatlog/internal/chatlog/webhook"
 	"github.com/sjzar/chatlog/internal/model"
 	"github.com/sjzar/chatlog/internal/wechatdb"
 )
@@ -15,21 +20,25 @@ const (
 )
 
 type Service struct {
-	State    int
-	StateMsg string
-	conf     Config
-	db       *wechatdb.DB
+	State         int
+	StateMsg      string
+	conf          Config
+	db            *wechatdb.DB
+	webhook       *webhook.Service
+	webhookCancel context.CancelFunc
 }
 
 type Config interface {
 	GetWorkDir() string
 	GetPlatform() string
 	GetVersion() int
+	GetWebhook() *conf.Webhook
 }
 
 func NewService(conf Config) *Service {
 	return &Service{
-		conf: conf,
+		conf:    conf,
+		webhook: webhook.New(conf),
 	}
 }
 
@@ -40,6 +49,7 @@ func (s *Service) Start() error {
 	}
 	s.SetReady()
 	s.db = db
+	s.initWebhook()
 	return nil
 }
 
@@ -49,6 +59,10 @@ func (s *Service) Stop() error {
 	}
 	s.SetInit()
 	s.db = nil
+	if s.webhookCancel != nil {
+		s.webhookCancel()
+		s.webhookCancel = nil
+	}
 	return nil
 }
 
@@ -94,8 +108,28 @@ func (s *Service) GetMedia(_type string, key string) (*model.Media, error) {
 	return s.db.GetMedia(_type, key)
 }
 
+func (s *Service) initWebhook() error {
+	if s.webhook == nil {
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.webhookCancel = cancel
+	hooks := s.webhook.GetHooks(ctx, s.db)
+	for _, hook := range hooks {
+		if err := s.db.SetCallback(hook.Group(), hook.Callback); err != nil {
+			log.Error().Err(err).Msgf("set callback %#v failed", hook)
+			return err
+		}
+	}
+	return nil
+}
+
 // Close closes the database connection
 func (s *Service) Close() {
 	// Add cleanup code if needed
 	s.db.Close()
+	if s.webhookCancel != nil {
+		s.webhookCancel()
+		s.webhookCancel = nil
+	}
 }

@@ -50,12 +50,12 @@ func (d *DBManager) AddGroup(g *Group) error {
 	return nil
 }
 
-func (d *DBManager) AddCallback(name string, callback func(event fsnotify.Event) error) error {
+func (d *DBManager) AddCallback(group string, callback func(event fsnotify.Event) error) error {
 	d.mutex.RLock()
-	fg, ok := d.fgs[name]
+	fg, ok := d.fgs[group]
 	d.mutex.RUnlock()
 	if !ok {
-		return errors.FileGroupNotFound(name)
+		return errors.FileGroupNotFound(group)
 	}
 	fg.AddCallback(callback)
 	return nil

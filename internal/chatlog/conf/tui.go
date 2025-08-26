@@ -4,6 +4,7 @@ type TUIConfig struct {
 	ConfigDir   string          `mapstructure:"-"`
 	LastAccount string          `mapstructure:"last_account" json:"last_account"`
 	History     []ProcessConfig `mapstructure:"history" json:"history"`
+	Webhook     *Webhook        `mapstructure:"webhook" json:"webhook"`
 }
 
 var TUIDefaults = map[string]any{}
