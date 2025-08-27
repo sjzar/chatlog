@@ -8,12 +8,15 @@ LDFLAGS := -ldflags '-X "github.com/sjzar/chatlog/pkg/version.Version=$(VERSION)
 PLATFORMS := \
 	darwin/amd64 \
 	darwin/arm64 \
+	linux/amd64 \
+	linux/arm64 \
 	windows/amd64 \
 	windows/arm64
 
 UPX_PLATFORMS := \
 	darwin/amd64 \
-	windows/386 \
+	linux/amd64 \
+	linux/arm64 \
 	windows/amd64
 
 .PHONY: all clean lint tidy test build crossbuild upx

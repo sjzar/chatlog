@@ -8,10 +8,12 @@ import (
 )
 
 type MediaMsg struct {
-	XMLName xml.Name `xml:"msg"`
-	Image   Image    `xml:"img,omitempty"`
-	Video   Video    `xml:"videomsg,omitempty"`
-	App     App      `xml:"appmsg,omitempty"`
+	XMLName  xml.Name `xml:"msg"`
+	Image    Image    `xml:"img,omitempty"`
+	Video    Video    `xml:"videomsg,omitempty"`
+	App      App      `xml:"appmsg,omitempty"`
+	Emoji    Emoji    `xml:"emoji,omitempty"`
+	Location Location `xml:"location,omitempty"`
 }
 
 type Image struct {
@@ -70,7 +72,61 @@ type App struct {
 	FinderFeed        *FinderFeed `xml:"finderFeed,omitempty"`        // type 51 视频号
 	ReferMsg          *ReferMsg   `xml:"refermsg,omitempty"`          // type 57 引用
 	PatMsg            *PatMsg     `xml:"patMsg,omitempty"`            // type 62 拍一拍
+	PatInfo           *PatInfo    `xml:"patinfo,omitempty"`           // type 62 拍一拍 v2
+	FinderLive        *FinderLive `xml:"finderLive,omitempty"`        // type 63 视频号直播
 	WCPayInfo         *WCPayInfo  `xml:"wcpayinfo,omitempty"`         // type 2000 微信转账
+}
+
+type Emoji struct {
+	FromUsername string `xml:"fromusername,attr"`
+	ToUsername   string `xml:"tousername,attr"`
+	Type         string `xml:"type,attr"`
+	IdBuffer     string `xml:"idbuffer,attr"`
+	Md5          string `xml:"md5,attr"`
+	Len          string `xml:"len,attr"`
+	CdnURL       string `xml:"cdnurl,attr"`
+	AesKey       string `xml:"aeskey,attr"`
+	Width        string `xml:"width,attr"`
+	Height       string `xml:"height,attr"`
+	// ProductId         string `xml:"productid,attr"`
+	// AndroidMd5        string `xml:"androidmd5,attr"`
+	// AndroidLen        string `xml:"androidlen,attr"`
+	// S60v3Md5          string `xml:"s60v3md5,attr"`
+	// S60v3Len          string `xml:"s60v3len,attr"`
+	// S60v5Md5          string `xml:"s60v5md5,attr"`
+	// S60v5Len          string `xml:"s60v5len,attr"`
+	// DesignerId        string `xml:"designerid,attr"`
+	// ThumbUrl          string `xml:"thumburl,attr"`
+	// EncryptUrl        string `xml:"encrypturl,attr"`
+	// ExternUrl         string `xml:"externurl,attr"`
+	// ExternMd5         string `xml:"externmd5,attr"`
+	// TpUrl             string `xml:"tpurl,attr"`
+	// TpAuthKey         string `xml:"tpauthkey,attr"`
+	// AttachedText      string `xml:"attachedtext,attr"`
+	// AttachedTextColor string `xml:"attachedtextcolor,attr"`
+	// LensId            string `xml:"lensid,attr"`
+	// EmojiAttr         string `xml:"emojiattr,attr"`
+	// LinkId            string `xml:"linkid,attr"`
+	// Desc              string `xml:"desc,attr"`
+}
+
+type Location struct {
+	X        string `xml:"x,attr"`
+	Y        string `xml:"y,attr"`
+	Scale    string `xml:"scale,attr"`
+	Label    string `xml:"label,attr"`
+	MapType  string `xml:"maptype,attr"`
+	Adcode   string `xml:"adcode,attr"`
+	CityName string `xml:"cityname,attr"`
+	// PoiName         string `xml:"poiname,attr"`
+	// PoiId           string `xml:"poiid,attr"`
+	// BuildingId      string `xml:"buildingId,attr"`
+	// FloorName       string `xml:"floorName,attr"`
+	// PoiCategoryTips string `xml:"poiCategoryTips,attr"`
+	// PoiBusinessHour string `xml:"poiBusinessHour,attr"`
+	// PoiPhone        string `xml:"poiPhone,attr"`
+	// PoiPriceTips    string `xml:"poiPriceTips,attr"`
+	// IsFromPoiList   string `xml:"isFromPoiList,attr"`
 }
 
 // ReferMsg 表示引用消息
@@ -153,27 +209,50 @@ type DataItem struct {
 	MessageUUID      string `xml:"messageuuid,omitempty"`
 	FromNewMsgID     string `xml:"fromnewmsgid,omitempty"`
 
+	// 链接
+	Link string `xml:"link,omitempty"`
+
+	// 音乐
+	StreamWebURL string `xml:"streamweburl,omitempty"`
+
+	// 位置
+	Location DataItemLocation `xml:"location,omitempty"`
+
 	// 套娃合并转发
 	DataTitle string     `xml:"datatitle,omitempty"`
 	RecordXML *RecordXML `xml:"recordxml,omitempty"`
+}
+
+type DataItemLocation struct {
+	Lat     string `xml:"lat,attr"`
+	Lng     string `xml:"lng,attr"`
+	Scale   string `xml:"scale,attr"`
+	Label   string `xml:"label,attr"`
+	PoiName string `xml:"poiname,attr"`
 }
 
 type RecordXML struct {
 	RecordInfo RecordInfo `xml:"recordinfo,omitempty"`
 }
 
-func (r *RecordInfo) String(title, host string) string {
+func (r *RecordInfo) String(_type, title, host string) string {
 	buf := strings.Builder{}
 	if title == "" {
 		title = r.Title
 	}
-	buf.WriteString(fmt.Sprintf("[合并转发|%s]\n", title))
+	if title == "" {
+		title = strings.TrimSpace(strings.ReplaceAll(r.Desc, "\n", " "))
+		if len(title) > 80 {
+			title = title[:80] + "..."
+		}
+	}
+	buf.WriteString(fmt.Sprintf("[%s|%s]\n", _type, title))
 	for _, item := range r.DataList.DataItems {
 		buf.WriteString(fmt.Sprintf("  %s %s\n", item.SourceName, item.SourceTime))
 
 		// 套娃合并转发
 		if item.DataType == "17" && item.RecordXML != nil {
-			content := item.RecordXML.RecordInfo.String(item.DataTitle, host)
+			content := item.RecordXML.RecordInfo.String(_type, item.DataTitle, host)
 			if content != "" {
 				for _, line := range strings.Split(content, "\n") {
 					buf.WriteString(fmt.Sprintf("  %s\n", line))
@@ -182,14 +261,44 @@ func (r *RecordInfo) String(title, host string) string {
 			continue
 		}
 
-		switch item.DataFmt {
-		case "pic", "jpg":
+		switch item.DataType {
+		case "2":
+			// 图片
 			buf.WriteString(fmt.Sprintf("  ![图片](http://%s/image/%s)\n", host, item.FullMD5))
+		case "4":
+			//视频
+			buf.WriteString(fmt.Sprintf("  ![视频](http://%s/video/%s)\n", host, item.FullMD5))
+		case "8":
+			// 文件
+			// FIXME 笔记的第一条是 htm 数据，暂时跳过处理
+			if item.DataFmt == ".htm" {
+				continue
+			}
+			buf.WriteString(fmt.Sprintf("  [文件|%s](http://%s/file/%s)\n", item.DataTitle, host, item.FullMD5))
+		case "5":
+			// Link
+			buf.WriteString(fmt.Sprintf("  [链接|%s](%s)\n", item.DataTitle, item.Link))
+		case "6":
+			// Location
+			buf.WriteString(fmt.Sprintf("  [位置|%s]\n", item.Location.PoiName))
+		case "22":
+			// 视频号
+			buf.WriteString(fmt.Sprintf("  [视频号|%s]\n", strings.TrimSpace(strings.ReplaceAll(item.DataDesc, "\n", " "))))
+		case "23":
+			// 视频号直播
+			buf.WriteString(fmt.Sprintf("  [视频号直播|%s]\n", strings.TrimSpace(strings.ReplaceAll(item.DataDesc, "\n", " "))))
+		case "32":
+			// 音乐
+			buf.WriteString(fmt.Sprintf("  [音乐|%s](%s)\n", item.DataTitle, item.StreamWebURL))
+		case "37":
+			// 动画表情
+			buf.WriteString("  [动画表情]\n")
 		default:
 			for _, line := range strings.Split(item.DataDesc, "\n") {
 				buf.WriteString(fmt.Sprintf("  %s\n", line))
 			}
 		}
+
 		buf.WriteString("\n")
 	}
 	return buf.String()
@@ -200,6 +309,16 @@ type PatMsg struct {
 	ChatUser  string  `xml:"chatUser"`  // 被拍的用户
 	RecordNum int     `xml:"recordNum"` // 记录数量
 	Records   Records `xml:"records"`   // 拍一拍记录
+}
+
+// PatInfo 拍一拍 v2
+type PatInfo struct {
+	FromUsername     string `xml:"fromusername"`
+	ChatUsername     string `xml:"chatusername"`
+	PattedUsername   string `xml:"pattedusername"`
+	PatSuffix        string `xml:"patsuffix"`
+	PatSuffixVersion int    `xml:"patsuffixversion"`
+	Template         string `xml:"template"`
 }
 
 // Records 拍一拍记录集合
@@ -283,10 +402,49 @@ type FinderMegaVideo struct {
 	ObjectNonceID string `xml:"objectNonceId"`
 }
 
+type FinderLive struct {
+	FinderLiveID               string          `xml:"finderLiveID"`
+	FinderUsername             string          `xml:"finderUsername"`
+	FinderObjectID             string          `xml:"finderObjectID"`
+	FinderNonceID              string          `xml:"finderNonceID"`
+	Nickname                   string          `xml:"nickname"`
+	HeadURL                    string          `xml:"headUrl"`
+	Desc                       string          `xml:"desc"`
+	LiveStatus                 int             `xml:"liveStatus"`
+	LiveSourceTypeStr          string          `xml:"liveSourceTypeStr"`
+	ExtFlag                    int             `xml:"extFlag"`
+	LiveSecondaryDeviceFlagStr string          `xml:"liveSecondaryDeviceFlagStr"`
+	LiveFlag                   int             `xml:"liveFlag"`
+	AuthIconURL                string          `xml:"authIconUrl"`
+	AuthIconTypeStr            string          `xml:"authIconTypeStr"`
+	BindType                   int             `xml:"bindType"`
+	BizUsername                string          `xml:"bizUsername"`
+	BizNickname                string          `xml:"bizNickname"`
+	ChargeFlag                 int             `xml:"chargeFlag"`
+	ReplayStatus               int             `xml:"replayStatus"`
+	SpamLiveExtFlagString      string          `xml:"spamLiveExtFlagString"`
+	EnterSessionID             string          `xml:"enterSessionId"`
+	LiveMode                   int             `xml:"liveMode"`
+	LiveSubMode                int             `xml:"liveSubMode"`
+	Media                      FinderLiveMedia `xml:"media"`
+	ShareScene                 int             `xml:"shareScene"`
+}
+
+type FinderLiveMedia struct {
+	CoverURL FinderLiveMediaCoverURL `xml:"coverUrl"`
+	Height   int                     `xml:"height"`
+	Width    int                     `xml:"width"`
+}
+
+type FinderLiveMediaCoverURL struct {
+	Text string `xml:",cdata"`
+}
+
 type SysMsg struct {
 	Type              string             `xml:"type,attr"`
 	DelChatRoomMember *DelChatRoomMember `xml:"delchatroommember,omitempty"`
 	SysMsgTemplate    *SysMsgTemplate    `xml:"sysmsgtemplate,omitempty"`
+	RevokeMsg         *RevokeMsg         `xml:"revokemsg,omitempty"`
 }
 
 // 第一种消息类型：删除群成员/二维码邀请
@@ -294,6 +452,11 @@ type DelChatRoomMember struct {
 	Plain string `xml:"plain"`
 	Text  string `xml:"text"`
 	Link  QRLink `xml:"link"`
+}
+
+type RevokeMsg struct {
+	Content    string `xml:"content"`
+	RevokeTime int    `xml:"revoketime"`
 }
 
 type QRLink struct {
@@ -345,8 +508,11 @@ type Member struct {
 }
 
 func (s *SysMsg) String() string {
-	if s.Type == "delchatroommember" {
+	switch s.Type {
+	case "delchatroommember":
 		return s.DelChatRoomMemberString()
+	case "revokemsg":
+		return s.RevokeMsg.Content
 	}
 	return s.SysMsgTemplateString()
 }

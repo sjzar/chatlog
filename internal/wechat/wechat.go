@@ -18,6 +18,7 @@ type Account struct {
 	FullVersion string
 	DataDir     string
 	Key         string
+	ImgKey      string
 	PID         uint32
 	ExePath     string
 	Status      string
@@ -63,55 +64,61 @@ func (a *Account) RefreshStatus() error {
 }
 
 // GetKey 获取账号的密钥
-func (a *Account) GetKey(ctx context.Context) (string, error) {
+func (a *Account) GetKey(ctx context.Context) (string, string, error) {
 	// 如果已经有密钥，直接返回
-	if a.Key != "" {
-		return a.Key, nil
+	if a.Key != "" && (a.ImgKey != "" || a.Version == 3) {
+		return a.Key, a.ImgKey, nil
 	}
 
 	// 刷新进程状态
 	if err := a.RefreshStatus(); err != nil {
-		return "", errors.RefreshProcessStatusFailed(err)
+		return "", "", errors.RefreshProcessStatusFailed(err)
 	}
 
 	// 检查账号状态
 	if a.Status != model.StatusOnline {
-		return "", errors.WeChatAccountNotOnline(a.Name)
+		return "", "", errors.WeChatAccountNotOnline(a.Name)
 	}
 
 	// 创建密钥提取器 - 使用新的接口，传入平台和版本信息
 	extractor, err := key.NewExtractor(a.Platform, a.Version)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	process, err := GetProcess(a.Name)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	validator, err := decrypt.NewValidator(process.Platform, process.Version, process.DataDir)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	extractor.SetValidate(validator)
 
 	// 提取密钥
-	key, err := extractor.Extract(ctx, process)
+	dataKey, imgKey, err := extractor.Extract(ctx, process)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
-	// 保存密钥
-	a.Key = key
-	return key, nil
+	if dataKey != "" {
+		a.Key = dataKey
+	}
+
+	if imgKey != "" {
+		a.ImgKey = imgKey
+	}
+
+	return dataKey, imgKey, nil
 }
 
 // DecryptDatabase 解密数据库
 func (a *Account) DecryptDatabase(ctx context.Context, dbPath, outputPath string) error {
 	// 获取密钥
-	hexKey, err := a.GetKey(ctx)
+	hexKey, _, err := a.GetKey(ctx)
 	if err != nil {
 		return err
 	}

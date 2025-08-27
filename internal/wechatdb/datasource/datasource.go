@@ -31,7 +31,7 @@ type DataSource interface {
 	GetMedia(ctx context.Context, _type string, key string) (*model.Media, error)
 
 	// 设置回调函数
-	SetCallback(name string, callback func(event fsnotify.Event) error) error
+	SetCallback(group string, callback func(event fsnotify.Event) error) error
 
 	Close() error
 }

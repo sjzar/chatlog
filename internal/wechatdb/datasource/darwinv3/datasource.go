@@ -109,8 +109,8 @@ func New(path string) (*DataSource, error) {
 	return ds, nil
 }
 
-func (ds *DataSource) SetCallback(name string, callback func(event fsnotify.Event) error) error {
-	return ds.dbm.AddCallback(name, callback)
+func (ds *DataSource) SetCallback(group string, callback func(event fsnotify.Event) error) error {
+	return ds.dbm.AddCallback(group, callback)
 }
 
 func (ds *DataSource) initMessageDbs() error {

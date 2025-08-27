@@ -2,6 +2,7 @@ package http
 
 import (
 	"embed"
+	"encoding/csv"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -9,12 +10,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/gin-gonic/gin"
+
 	"github.com/sjzar/chatlog/internal/errors"
 	"github.com/sjzar/chatlog/pkg/util"
 	"github.com/sjzar/chatlog/pkg/util/dat2img"
 	"github.com/sjzar/chatlog/pkg/util/silk"
-
-	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog/log"
 )
 
@@ -24,40 +25,54 @@ import (
 var EFS embed.FS
 
 func (s *Service) initRouter() {
+	s.initBaseRouter()
+	s.initMediaRouter()
+	s.initAPIRouter()
+	s.initMCPRouter()
+}
 
-	router := s.GetRouter()
-
+func (s *Service) initBaseRouter() {
 	staticDir, _ := fs.Sub(EFS, "static")
-	router.StaticFS("/static", http.FS(staticDir))
-	router.StaticFileFS("/favicon.ico", "./favicon.ico", http.FS(staticDir))
-	router.StaticFileFS("/", "./index.htm", http.FS(staticDir))
 
-	// Media
-	router.GET("/image/*key", s.GetImage)
-	router.GET("/video/*key", s.GetVideo)
-	router.GET("/file/*key", s.GetFile)
-	router.GET("/voice/*key", s.GetVoice)
-	router.GET("/data/*path", s.GetMediaData)
+	s.router.StaticFS("/static", http.FS(staticDir))
+	s.router.StaticFileFS("/favicon.ico", "./favicon.ico", http.FS(staticDir))
+	s.router.StaticFileFS("/", "./index.htm", http.FS(staticDir))
 
-	// MCP Server
+	s.router.GET("/health", func(ctx *gin.Context) {
+		ctx.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
+	s.router.NoRoute(s.NoRoute)
+}
+
+func (s *Service) initMediaRouter() {
+	s.router.GET("/image/*key", func(c *gin.Context) { s.handleMedia(c, "image") })
+	s.router.GET("/video/*key", func(c *gin.Context) { s.handleMedia(c, "video") })
+	s.router.GET("/file/*key", func(c *gin.Context) { s.handleMedia(c, "file") })
+	s.router.GET("/voice/*key", func(c *gin.Context) { s.handleMedia(c, "voice") })
+	s.router.GET("/data/*path", s.handleMediaData)
+}
+
+func (s *Service) initAPIRouter() {
+	api := s.router.Group("/api/v1", s.checkDBStateMiddleware())
 	{
-		router.GET("/sse", s.mcp.HandleSSE)
-		router.POST("/messages", s.mcp.HandleMessages)
-		// mcp inspector is shit
-		// https://github.com/modelcontextprotocol/inspector/blob/aeaf32f/server/src/index.ts#L155
-		router.POST("/message", s.mcp.HandleMessages)
+		api.GET("/chatlog", s.handleChatlog)
+		api.GET("/contact", s.handleContacts)
+		api.GET("/chatroom", s.handleChatRooms)
+		api.GET("/session", s.handleSessions)
 	}
+}
 
-	// API V1 Router
-	api := router.Group("/api/v1")
-	{
-		api.GET("/chatlog", s.GetChatlog)
-		api.GET("/contact", s.GetContacts)
-		api.GET("/chatroom", s.GetChatRooms)
-		api.GET("/session", s.GetSessions)
-	}
-
-	router.NoRoute(s.NoRoute)
+func (s *Service) initMCPRouter() {
+	s.router.Any("/mcp", func(c *gin.Context) {
+		s.mcpStreamableServer.ServeHTTP(c.Writer, c.Request)
+	})
+	s.router.Any("/sse", func(c *gin.Context) {
+		s.mcpSSEServer.ServeHTTP(c.Writer, c.Request)
+	})
+	s.router.Any("/message", func(c *gin.Context) {
+		s.mcpSSEServer.ServeHTTP(c.Writer, c.Request)
+	})
 }
 
 // NoRoute handles 404 Not Found errors. If the request URL starts with "/api"
@@ -73,7 +88,7 @@ func (s *Service) NoRoute(c *gin.Context) {
 	}
 }
 
-func (s *Service) GetChatlog(c *gin.Context) {
+func (s *Service) handleChatlog(c *gin.Context) {
 
 	q := struct {
 		Time    string `form:"time"`
@@ -111,6 +126,18 @@ func (s *Service) GetChatlog(c *gin.Context) {
 
 	switch strings.ToLower(q.Format) {
 	case "csv":
+		c.Writer.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		c.Writer.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s_%s_%s.csv", q.Talker, start.Format("2006-01-02"), end.Format("2006-01-02")))
+		c.Writer.Header().Set("Cache-Control", "no-cache")
+		c.Writer.Header().Set("Connection", "keep-alive")
+		c.Writer.Flush()
+
+		csvWriter := csv.NewWriter(c.Writer)
+		csvWriter.Write([]string{"Time", "SenderName", "Sender", "TalkerName", "Talker", "Content"})
+		for _, m := range messages {
+			csvWriter.Write(m.CSV(c.Request.Host))
+		}
+		csvWriter.Flush()
 	case "json":
 		// json
 		c.JSON(http.StatusOK, messages)
@@ -129,7 +156,7 @@ func (s *Service) GetChatlog(c *gin.Context) {
 	}
 }
 
-func (s *Service) GetContacts(c *gin.Context) {
+func (s *Service) handleContacts(c *gin.Context) {
 
 	q := struct {
 		Keyword string `form:"keyword"`
@@ -174,7 +201,7 @@ func (s *Service) GetContacts(c *gin.Context) {
 	}
 }
 
-func (s *Service) GetChatRooms(c *gin.Context) {
+func (s *Service) handleChatRooms(c *gin.Context) {
 
 	q := struct {
 		Keyword string `form:"keyword"`
@@ -218,7 +245,7 @@ func (s *Service) GetChatRooms(c *gin.Context) {
 	}
 }
 
-func (s *Service) GetSessions(c *gin.Context) {
+func (s *Service) handleSessions(c *gin.Context) {
 
 	q := struct {
 		Keyword string `form:"keyword"`
@@ -266,32 +293,7 @@ func (s *Service) GetSessions(c *gin.Context) {
 	}
 }
 
-func (s *Service) GetImage(c *gin.Context) {
-	s.GetMedia(c, "image")
-}
-
-func (s *Service) GetVideo(c *gin.Context) {
-	s.GetMedia(c, "video")
-}
-
-func (s *Service) GetFile(c *gin.Context) {
-	s.GetMedia(c, "file")
-}
-func (s *Service) GetVoice(c *gin.Context) {
-	key := strings.TrimPrefix(c.Param("key"), "/")
-	log.Info().Str("key", key).Msg("开始处理语音消息请求")
-
-	if key == "" {
-		log.Error().Msg("语音消息key为空")
-		errors.Err(c, errors.InvalidArg(key))
-		return
-	}
-
-	log.Debug().Str("key", key).Msg("调用GetMedia获取语音数据")
-	s.GetMedia(c, "voice")
-}
-
-func (s *Service) GetMedia(c *gin.Context, _type string) {
+func (s *Service) handleMedia(c *gin.Context, _type string) {
 	key := strings.TrimPrefix(c.Param("key"), "/")
 	log.Info().Str("type", _type).Str("key", key).Msg("开始获取媒体文件")
 
@@ -311,43 +313,12 @@ func (s *Service) GetMedia(c *gin.Context, _type string) {
 	log.Debug().Str("type", _type).Int("key_count", len(keys)).Strs("keys", keys).Msg("解析到的key列表")
 
 	var _err error
-	for i, k := range keys {
-		log.Debug().Str("type", _type).Int("index", i).Str("current_key", k).Msg("处理当前key")
-
-		// 对于语音消息，直接进行数据库查询，不检查key长度
-		if _type == "voice" {
-			log.Debug().Str("type", _type).Str("key", k).Msg("语音类型，直接进行数据库查询")
-			media, err := s.db.GetMedia(_type, k)
-			if err != nil {
-				log.Error().Err(err).Str("type", _type).Str("key", k).Msg("从数据库获取语音数据失败")
-				_err = err
-				continue
-			}
-
-			log.Info().Str("type", _type).Str("key", k).Str("media_type", media.Type).Int("data_size", len(media.Data)).Msg("成功获取语音数据")
-
-			if c.Query("info") != "" {
-				log.Debug().Str("type", _type).Str("key", k).Msg("返回语音信息JSON")
-				c.JSON(http.StatusOK, media)
+	for _, k := range keys {
+		if strings.Contains(k, "/") {
+			if absolutePath, err := s.findPath(_type, k); err == nil {
+				c.Redirect(http.StatusFound, "/data/"+absolutePath)
 				return
 			}
-
-			log.Debug().Str("key", k).Int("voice_data_size", len(media.Data)).Msg("开始处理语音数据")
-			s.HandleVoice(c, media.Data)
-			return
-		}
-
-		// 对于其他类型的媒体文件，保持原有逻辑
-		if len(k) != 32 {
-			log.Debug().Str("type", _type).Str("key", k).Int("key_length", len(k)).Msg("key长度不是32，尝试作为相对路径处理")
-			absolutePath := filepath.Join(s.ctx.DataDir, k)
-			if _, err := os.Stat(absolutePath); os.IsNotExist(err) {
-				log.Warn().Str("type", _type).Str("path", absolutePath).Msg("文件路径不存在，继续下一个key")
-				continue
-			}
-			log.Info().Str("type", _type).Str("path", absolutePath).Msg("找到文件，重定向到静态文件")
-			c.Redirect(http.StatusFound, "/data/"+k)
-			return
 		}
 
 		log.Debug().Str("type", _type).Str("key", k).Msg("开始从数据库获取媒体数据")
@@ -386,10 +357,32 @@ func (s *Service) GetMedia(c *gin.Context, _type string) {
 	log.Warn().Str("type", _type).Strs("keys", keys).Msg("所有key处理完毕，但未找到有效数据")
 }
 
-func (s *Service) GetMediaData(c *gin.Context) {
+func (s *Service) findPath(_type string, key string) (string, error) {
+	absolutePath := filepath.Join(s.conf.GetDataDir(), key)
+	if _, err := os.Stat(absolutePath); err == nil {
+		return key, nil
+	}
+	switch _type {
+	case "image":
+		for _, suffix := range []string{"_h.dat", ".dat", "_t.dat"} {
+			if _, err := os.Stat(absolutePath + suffix); err == nil {
+				return key + suffix, nil
+			}
+		}
+	case "video":
+		for _, suffix := range []string{".mp4", "_thumb.jpg"} {
+			if _, err := os.Stat(absolutePath + suffix); err == nil {
+				return key + suffix, nil
+			}
+		}
+	}
+	return "", errors.ErrMediaNotFound
+}
+
+func (s *Service) handleMediaData(c *gin.Context) {
 	relativePath := filepath.Clean(c.Param("path"))
 
-	absolutePath := filepath.Join(s.ctx.DataDir, relativePath)
+	absolutePath := filepath.Join(s.conf.GetDataDir(), relativePath)
 
 	if _, err := os.Stat(absolutePath); os.IsNotExist(err) {
 		c.JSON(http.StatusNotFound, gin.H{
@@ -423,7 +416,7 @@ func (s *Service) HandleDatFile(c *gin.Context, path string) {
 	}
 
 	switch ext {
-	case "jpg":
+	case "jpg", "jpeg":
 		c.Data(http.StatusOK, "image/jpeg", out)
 	case "png":
 		c.Data(http.StatusOK, "image/png", out)
@@ -431,6 +424,8 @@ func (s *Service) HandleDatFile(c *gin.Context, path string) {
 		c.Data(http.StatusOK, "image/gif", out)
 	case "bmp":
 		c.Data(http.StatusOK, "image/bmp", out)
+	case "mp4":
+		c.Data(http.StatusOK, "video/mp4", out)
 	default:
 		c.Data(http.StatusOK, "image/jpg", out)
 		// c.File(path)

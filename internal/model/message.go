@@ -17,6 +17,94 @@ const (
 	WeChatDarwinV3 = "wechatdarwinv3"
 )
 
+const (
+	// MessageTypeText 文本
+	MessageTypeText = 1
+
+	// MessageTypeImage 图片
+	MessageTypeImage = 3
+
+	// MessageTypeVoice 语音
+	MessageTypeVoice = 34
+
+	// MessageTypeCard 名片
+	MessageTypeCard = 42
+
+	// MessageTypeVideo 视频
+	MessageTypeVideo = 43
+
+	// MessageTypeAnimation 动画表情
+	MessageTypeAnimation = 47
+
+	// MessageTypeLocation 位置
+	MessageTypeLocation = 48
+
+	// MessageTypeShare 分享
+	MessageTypeShare = 49
+
+	// MessageTypeVOIP 语音通话
+	MessageTypeVOIP = 50
+
+	// MessageTypeSystem 系统
+	MessageTypeSystem = 10000
+)
+
+const (
+	// MessageSubTypeText 文本
+	MessageSubTypeText = 1
+
+	// MessageSubTypeLink 链接分享
+	MessageSubTypeLink = 4
+
+	// MessageSubTypeLink2 链接分享
+	MessageSubTypeLink2 = 5
+
+	// MessageSubTypeFile 文件
+	MessageSubTypeFile = 6
+
+	// MessageSubTypeGIF 动图
+	MessageSubTypeGIF = 8
+
+	// MessageSubTypeMergeForward 合并转发
+	MessageSubTypeMergeForward = 19
+
+	// MessageSubTypeNote 笔记
+	MessageSubTypeNote = 24
+
+	// MessageSubTypeMiniProgram 小程序
+	MessageSubTypeMiniProgram = 33
+
+	// MessageSubTypeMiniProgram2 小程序
+	MessageSubTypeMiniProgram2 = 36
+
+	// MessageSubTypeChannel 视频号
+	MessageSubTypeChannel = 51
+
+	// MessageSubTypeQuote 引用
+	MessageSubTypeQuote = 57
+
+	// MessageSubTypePat 拍一拍
+	MessageSubTypePat = 62
+
+	// MessageSubTypeChannelLive 视频号直播
+	MessageSubTypeChannelLive = 63
+
+	// MessageSubTypeChatRoomNotice 群公告
+	MessageSubTypeChatRoomNotice = 87
+
+	// MessageSubTypeMusic 音乐
+	MessageSubTypeMusic = 92
+
+	// MessageSubTypePay 转账
+	MessageSubTypePay = 2000
+
+	// MessageSubTypeRedEnvelope 红包
+	MessageSubTypeRedEnvelope = 2001
+
+	// MessageSubTypeRedEnvelopeCover 红包封面
+	MessageSubTypeRedEnvelopeCover = 2003
+)
+
 type Message struct {
 	Version    string                 `json:"-"`                  // 消息版本，内部判断
 	Seq        int64                  `json:"seq"`                // 消息序号，10位时间戳 + 3位序号
@@ -46,7 +134,9 @@ func (m *Message) ParseMediaInfo(data string) error {
 		return nil
 	}
 
-	if m.Type == 10000 {
+	if m.Type == MessageTypeSystem {
+		m.Sender = "系统消息"
+		m.SenderName = ""
 		var sysMsg SysMsg
 		if err := xml.Unmarshal([]byte(data), &sysMsg); err != nil {
 			m.Content = data
@@ -55,8 +145,6 @@ func (m *Message) ParseMediaInfo(data string) error {
 		if Debug {
 			m.SysMsg = &sysMsg
 		}
-		m.Sender = "系统消息"
-		m.SenderName = ""
 		m.Content = sysMsg.String()
 		return nil
 	}
@@ -76,28 +164,36 @@ func (m *Message) ParseMediaInfo(data string) error {
 	}
 
 	switch m.Type {
-	case 3:
+	case MessageTypeImage:
 		m.Contents["md5"] = msg.Image.MD5
-	case 43:
+	case MessageTypeVideo:
 		if msg.Video.Md5 != "" {
 			m.Contents["md5"] = msg.Video.Md5
 		}
 		if msg.Video.RawMd5 != "" {
 			m.Contents["rawmd5"] = msg.Video.RawMd5
 		}
-	case 49:
+	case MessageTypeAnimation:
+		m.Contents["cdnurl"] = msg.Emoji.CdnURL
+	case MessageTypeLocation:
+		m.Contents["x"] = msg.Location.X
+		m.Contents["y"] = msg.Location.Y
+		m.Contents["label"] = msg.Location.Label
+		m.Contents["cityname"] = msg.Location.CityName
+	case MessageTypeShare:
 		m.SubType = int64(msg.App.Type)
 		switch m.SubType {
-		case 5:
+		case MessageSubTypeText, MessageSubTypeLink, MessageSubTypeLink2:
 			// 链接
 			m.Contents["title"] = msg.App.Title
+			m.Contents["desc"] = msg.App.Des
 			m.Contents["url"] = msg.App.URL
-		case 6:
+		case MessageSubTypeFile:
 			// 文件
 			m.Contents["title"] = msg.App.Title
 			m.Contents["md5"] = msg.App.MD5
-		case 19:
-			// 合并转发
+		case MessageSubTypeMergeForward, MessageSubTypeNote, MessageSubTypeChatRoomNotice:
+			// 合并转发 & 笔记
 			m.Contents["title"] = msg.App.Title
 			m.Contents["desc"] = msg.App.Des
 			if msg.App.RecordItem == nil {
@@ -109,20 +205,20 @@ func (m *Message) ParseMediaInfo(data string) error {
 				return err
 			}
 			m.Contents["recordInfo"] = recordInfo
-		case 33, 36:
+		case MessageSubTypeMiniProgram, MessageSubTypeMiniProgram2:
 			// 小程序
 			m.Contents["title"] = msg.App.SourceDisplayName
 			m.Contents["url"] = msg.App.URL
-		case 51:
+		case MessageSubTypeChannel:
 			// 视频号
 			if msg.App.FinderFeed == nil {
 				break
 			}
-			m.Contents["title"] = msg.App.FinderFeed.Desc
+			m.Contents["title"] = strings.TrimSpace(strings.ReplaceAll(msg.App.FinderFeed.Desc, "\n", " "))
 			if len(msg.App.FinderFeed.MediaList.Media) > 0 {
 				m.Contents["url"] = msg.App.FinderFeed.MediaList.Media[0].URL
 			}
-		case 57:
+		case MessageSubTypeQuote:
 			// 引用
 			m.Content = msg.App.Title
 			if msg.App.ReferMsg == nil {
@@ -141,17 +237,29 @@ func (m *Message) ParseMediaInfo(data string) error {
 				break
 			}
 			m.Contents["refer"] = subMsg
-		case 62:
+		case MessageSubTypePat:
 			// 拍一拍
-			if msg.App.PatMsg == nil {
+			if msg.App.PatMsg != nil {
+				if len(msg.App.PatMsg.Records.Record) != 0 {
+					m.Sender = msg.App.PatMsg.Records.Record[0].FromUser
+					m.Content = msg.App.PatMsg.Records.Record[0].Templete
+				}
+			}
+			if msg.App.PatInfo != nil {
+				m.Content = msg.App.Title
+			}
+		case MessageSubTypeChannelLive:
+			// 视频号直播
+			if msg.App.FinderLive == nil {
 				break
 			}
-			if len(msg.App.PatMsg.Records.Record) == 0 {
-				break
-			}
-			m.Sender = msg.App.PatMsg.Records.Record[0].FromUser
-			m.Content = msg.App.PatMsg.Records.Record[0].Templete
-		case 2000:
+			m.Contents["title"] = msg.App.FinderLive.Desc
+		case MessageSubTypeMusic:
+			// 音乐
+			m.Contents["title"] = msg.App.Title
+			m.Contents["desc"] = msg.App.Des
+			m.Contents["url"] = msg.App.URL
+		case MessageSubTypePay:
 			// 微信转账
 			if msg.App.WCPayInfo == nil {
 				break
@@ -236,34 +344,29 @@ func (m *Message) PlainText(showChatRoom bool, timeFormat string, host string) s
 
 func (m *Message) PlainTextContent() string {
 	switch m.Type {
-	case 1:
+	case MessageTypeText:
 		return m.Content
-	case 3:
+	case MessageTypeImage:
 		keylist := make([]string, 0)
 		if m.Contents["md5"] != nil {
 			if md5, ok := m.Contents["md5"].(string); ok {
 				keylist = append(keylist, md5)
 			}
 		}
-		if m.Contents["imgfile"] != nil {
-			if imgfile, ok := m.Contents["imgfile"].(string); ok {
-				keylist = append(keylist, imgfile)
-			}
-		}
-		if m.Contents["thumb"] != nil {
-			if thumb, ok := m.Contents["thumb"].(string); ok {
-				keylist = append(keylist, thumb)
+		if m.Contents["path"] != nil {
+			if path, ok := m.Contents["path"].(string); ok {
+				keylist = append(keylist, path)
 			}
 		}
 		return fmt.Sprintf("![图片](http://%s/image/%s)", m.Contents["host"], strings.Join(keylist, ","))
-	case 34:
+	case MessageTypeVoice:
 		if voice, ok := m.Contents["voice"]; ok {
 			return fmt.Sprintf("[语音](http://%s/voice/%s)", m.Contents["host"], voice)
 		}
 		return "[语音]"
-	case 42:
+	case MessageTypeCard:
 		return "[名片]"
-	case 43:
+	case MessageTypeVideo:
 		keylist := make([]string, 0)
 		if m.Contents["md5"] != nil {
 			if md5, ok := m.Contents["md5"].(string); ok {
@@ -275,28 +378,40 @@ func (m *Message) PlainTextContent() string {
 				keylist = append(keylist, rawmd5)
 			}
 		}
-		if m.Contents["videofile"] != nil {
-			if videofile, ok := m.Contents["videofile"].(string); ok {
-				keylist = append(keylist, videofile)
-			}
-		}
-		if m.Contents["thumb"] != nil {
-			if thumb, ok := m.Contents["thumb"].(string); ok {
-				keylist = append(keylist, thumb)
+		if m.Contents["path"] != nil {
+			if path, ok := m.Contents["path"].(string); ok {
+				keylist = append(keylist, path)
 			}
 		}
 		return fmt.Sprintf("![视频](http://%s/video/%s)", m.Contents["host"], strings.Join(keylist, ","))
-	case 47:
+	case MessageTypeAnimation:
+		if m.Contents["cdnurl"] != nil {
+			if cdnURL, ok := m.Contents["cdnurl"].(string); ok {
+				return fmt.Sprintf("![动画表情](%s)", cdnURL)
+			}
+		}
 		return "[动画表情]"
-	case 49:
+	case MessageTypeLocation:
+		keylist := make([]string, 0)
+		for _, key := range []string{"label", "cityname", "x", "y"} {
+			if m.Contents[key] != nil {
+				if value, ok := m.Contents[key].(string); ok {
+					keylist = append(keylist, value)
+				}
+			}
+		}
+		return fmt.Sprintf("[位置|%s]", strings.Join(keylist, "|"))
+	case MessageTypeShare:
 		switch m.SubType {
-		case 5:
+		case MessageSubTypeText:
+			return fmt.Sprintf("[链接|%s](%s)", m.Contents["title"], m.Contents["desc"])
+		case MessageSubTypeLink, MessageSubTypeLink2:
 			return fmt.Sprintf("[链接|%s](%s)", m.Contents["title"], m.Contents["url"])
-		case 6:
+		case MessageSubTypeFile:
 			return fmt.Sprintf("[文件|%s](http://%s/file/%s)", m.Contents["title"], m.Contents["host"], m.Contents["md5"])
-		case 8:
+		case MessageSubTypeGIF:
 			return "[GIF表情]"
-		case 19:
+		case MessageSubTypeMergeForward:
 			_recordInfo, ok := m.Contents["recordInfo"]
 			if !ok {
 				return "[合并转发]"
@@ -309,19 +424,33 @@ func (m *Message) PlainTextContent() string {
 			if m.Contents["host"] != nil {
 				host = m.Contents["host"].(string)
 			}
-			return recordInfo.String("", host)
-		case 33, 36:
+			return recordInfo.String("合并转发", "", host)
+		case MessageSubTypeNote:
+			_recordInfo, ok := m.Contents["recordInfo"]
+			if !ok {
+				return "[笔记]"
+			}
+			recordInfo, ok := _recordInfo.(*RecordInfo)
+			if !ok {
+				return "[笔记]"
+			}
+			host := ""
+			if m.Contents["host"] != nil {
+				host = m.Contents["host"].(string)
+			}
+			return recordInfo.String("笔记", "", host)
+		case MessageSubTypeMiniProgram, MessageSubTypeMiniProgram2:
 			if m.Contents["title"] == "" {
 				return "[小程序]"
 			}
 			return fmt.Sprintf("[小程序|%s](%s)", m.Contents["title"], m.Contents["url"])
-		case 51:
+		case MessageSubTypeChannel:
 			if m.Contents["title"] == "" {
 				return "[视频号]"
 			} else {
 				return fmt.Sprintf("[视频号|%s](%s)", m.Contents["title"], m.Contents["url"])
 			}
-		case 57:
+		case MessageSubTypeQuote:
 			_refer, ok := m.Contents["refer"]
 			if !ok {
 				if m.Content == "" {
@@ -352,24 +481,41 @@ func (m *Message) PlainTextContent() string {
 			}
 			buf.WriteString(m.Content)
 			return buf.String()
-		case 62:
+		case MessageSubTypePat:
 			return m.Content
-		case 63:
-			return "[视频号]"
-		case 87:
-			return "[群公告]"
-		case 2000:
+		case MessageSubTypeChannelLive:
+			if m.Contents["title"] != nil {
+				return fmt.Sprintf("[视频号直播|%s]", m.Contents["title"])
+			}
+			return "[视频号直播]"
+		case MessageSubTypeChatRoomNotice:
+			_recordInfo, ok := m.Contents["recordInfo"]
+			if !ok {
+				return "[群公告]"
+			}
+			recordInfo, ok := _recordInfo.(*RecordInfo)
+			if !ok {
+				return "[群公告]"
+			}
+			host := ""
+			if m.Contents["host"] != nil {
+				host = m.Contents["host"].(string)
+			}
+			return recordInfo.String("群公告", "", host)
+		case MessageSubTypeMusic:
+			return fmt.Sprintf("[音乐|%s](%s)", m.Contents["title"], m.Contents["url"])
+		case MessageSubTypePay:
 			return m.Content
-		case 2001:
+		case MessageSubTypeRedEnvelope:
 			return "[红包]"
-		case 2003:
+		case MessageSubTypeRedEnvelopeCover:
 			return "[红包封面]"
 		default:
 			return "[分享]"
 		}
-	case 50:
+	case MessageTypeVOIP:
 		return "[语音通话]"
-	case 10000:
+	case MessageTypeSystem:
 		return m.Content
 	default:
 		content := m.Content
@@ -377,5 +523,17 @@ func (m *Message) PlainTextContent() string {
 			content = content[:120] + "<...>"
 		}
 		return fmt.Sprintf("Type: %d Content: %s", m.Type, content)
+	}
+}
+
+func (m *Message) CSV(host string) []string {
+	m.SetContent("host", host)
+	return []string{
+		m.Time.Format("2006-01-02 15:04:05"),
+		m.SenderName,
+		m.Sender,
+		m.TalkerName,
+		m.Talker,
+		m.PlainTextContent(),
 	}
 }

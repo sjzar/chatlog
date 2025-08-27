@@ -11,7 +11,6 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/rs/zerolog/log"
 
-	"github.com/sjzar/chatlog/internal/chatlog/ctx"
 	"github.com/sjzar/chatlog/internal/errors"
 	"github.com/sjzar/chatlog/internal/wechat"
 	"github.com/sjzar/chatlog/internal/wechat/decrypt"
@@ -25,16 +24,24 @@ var (
 )
 
 type Service struct {
-	ctx            *ctx.Context
+	conf           Config
 	lastEvents     map[string]time.Time
 	pendingActions map[string]bool
 	mutex          sync.Mutex
 	fm             *filemonitor.FileMonitor
 }
 
-func NewService(ctx *ctx.Context) *Service {
+type Config interface {
+	GetDataKey() string
+	GetDataDir() string
+	GetWorkDir() string
+	GetPlatform() string
+	GetVersion() int
+}
+
+func NewService(conf Config) *Service {
 	return &Service{
-		ctx:            ctx,
+		conf:           conf,
 		lastEvents:     make(map[string]time.Time),
 		pendingActions: make(map[string]bool),
 	}
@@ -52,7 +59,7 @@ func (s *Service) GetDataKey(info *wechat.Account) (string, error) {
 		return "", fmt.Errorf("no WeChat instance selected")
 	}
 
-	key, err := info.GetKey(context.Background())
+	key, _, err := info.GetKey(context.Background())
 	if err != nil {
 		return "", err
 	}
@@ -61,7 +68,7 @@ func (s *Service) GetDataKey(info *wechat.Account) (string, error) {
 }
 
 func (s *Service) StartAutoDecrypt() error {
-	dbGroup, err := filemonitor.NewFileGroup("wechat", s.ctx.DataDir, `.*\.db$`, []string{"fts"})
+	dbGroup, err := filemonitor.NewFileGroup("wechat", s.conf.GetDataDir(), `.*\.db$`, []string{"fts"})
 	if err != nil {
 		return err
 	}
@@ -129,12 +136,12 @@ func (s *Service) waitAndProcess(dbFile string) {
 
 func (s *Service) DecryptDBFile(dbFile string) error {
 
-	decryptor, err := decrypt.NewDecryptor(s.ctx.Platform, s.ctx.Version)
+	decryptor, err := decrypt.NewDecryptor(s.conf.GetPlatform(), s.conf.GetVersion())
 	if err != nil {
 		return err
 	}
 
-	output := filepath.Join(s.ctx.WorkDir, dbFile[len(s.ctx.DataDir):])
+	output := filepath.Join(s.conf.GetWorkDir(), dbFile[len(s.conf.GetDataDir()):])
 	if err := util.PrepareDir(filepath.Dir(output)); err != nil {
 		return err
 	}
@@ -151,7 +158,7 @@ func (s *Service) DecryptDBFile(dbFile string) error {
 		}
 	}()
 
-	if err := decryptor.Decrypt(context.Background(), dbFile, s.ctx.DataKey, outputFile); err != nil {
+	if err := decryptor.Decrypt(context.Background(), dbFile, s.conf.GetDataKey(), outputFile); err != nil {
 		if err == errors.ErrAlreadyDecrypted {
 			if data, err := os.ReadFile(dbFile); err == nil {
 				outputFile.Write(data)
@@ -168,7 +175,7 @@ func (s *Service) DecryptDBFile(dbFile string) error {
 }
 
 func (s *Service) DecryptDBFiles() error {
-	dbGroup, err := filemonitor.NewFileGroup("wechat", s.ctx.DataDir, `.*\.db$`, []string{"fts"})
+	dbGroup, err := filemonitor.NewFileGroup("wechat", s.conf.GetDataDir(), `.*\.db$`, []string{"fts"})
 	if err != nil {
 		return err
 	}

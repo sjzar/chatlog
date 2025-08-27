@@ -6,61 +6,67 @@ before:
     - go mod tidy
 
 builds:
-  - id: darwin-amd64
+  - id: chatlog-builds
     binary: chatlog
+    ldflags:
+      - -s -w -X github.com/sjzar/chatlog/pkg/version.Version={{.Version}}
     env:
       - CGO_ENABLED=1
-      - CC=o64-clang
-      - CXX=o64-clang++
     goos:
       - darwin
+      - windows
+      - linux
     goarch:
       - amd64
-    ldflags:
-      - -s -w -X github.com/sjzar/chatlog/pkg/version.Version={{.Version}}
-
-  - id: darwin-arm64
-    binary: chatlog
-    env:
-      - CGO_ENABLED=1
-      - CC=oa64-clang
-      - CXX=oa64-clang++
-    goos:
-      - darwin
-    goarch:
       - arm64
-    ldflags:
-      - -s -w -X github.com/sjzar/chatlog/pkg/version.Version={{.Version}}
+    overrides:
+      - goos: darwin
+        goarch: amd64
+        env:
+          - CGO_ENABLED=1
+          - CC=o64-clang
+          - CXX=o64-clang++
+      - goos: darwin
+        goarch: arm64
+        env:
+          - CGO_ENABLED=1
+          - CC=oa64-clang
+          - CXX=oa64-clang++
+      - goos: windows
+        goarch: amd64
+        env:
+          - CGO_ENABLED=1
+          - CC=x86_64-w64-mingw32-gcc
+          - CXX=x86_64-w64-mingw32-g++
+      - goos: windows
+        goarch: arm64
+        env:
+          - CGO_ENABLED=1
+          - CC=/llvm-mingw/bin/aarch64-w64-mingw32-gcc
+          - CXX=/llvm-mingw/bin/aarch64-w64-mingw32-g++
+      - goos: linux
+        goarch: amd64
+        env:
+          - CGO_ENABLED=1
+          - CC=x86_64-linux-gnu-gcc
+          - CXX=x86_64-linux-gnu-g++
+      - goos: linux
+        goarch: arm64
+        env:
+          - CGO_ENABLED=1
+          - CC=aarch64-linux-gnu-gcc
+          - CXX=aarch64-linux-gnu-g++
 
-  - id: windows-amd64
-    binary: chatlog
-    env:
-      - CGO_ENABLED=1
-      - CC=x86_64-w64-mingw32-gcc
-      - CXX=x86_64-w64-mingw32-g++
-    goos:
-      - windows
-    goarch:
-      - amd64
-    ldflags:
-      - -s -w -X github.com/sjzar/chatlog/pkg/version.Version={{.Version}}
-
-  - id: windows-arm64
-    binary: chatlog
-    env:
-      - CGO_ENABLED=1
-      - CC=/llvm-mingw/bin/aarch64-w64-mingw32-gcc
-      - CXX=/llvm-mingw/bin/aarch64-w64-mingw32-g++
-    goos:
-      - windows
-    goarch:
-      - arm64
-    ldflags:
-      - -s -w -X github.com/sjzar/chatlog/pkg/version.Version={{.Version}}
+upx:
+  - enabled: true
+    goos: [darwin, windows, linux]
+    goarch: [amd64, arm64]
+    compress: best
+    lzma: true
 
 archives:
   - id: default
-    format: tar.gz
+    formats: tar.gz
     name_template: >-
       {{ .ProjectName }}_
       {{- .Version }}_
@@ -68,16 +74,10 @@ archives:
       {{- .Arch }}
     format_overrides:
       - goos: windows
-        format: zip
+        formats: zip
     files:
       - LICENSE
       - README.md
-
-upx:
-  - enabled: "{{ .Env.ENABLE_UPX }}"
-    goos: [darwin, windows]
-    goarch: [amd64]
-    compress: best
 
 checksum:
   name_template: 'checksums.txt'
@@ -88,3 +88,68 @@ release:
   draft: true
   prerelease: auto
   mode: replace
+
+# Docker 镜像配置
+# FIXME: 等待 goreleaser 2.12 更新后使用 dockers_v2
+dockers:
+  - image_templates:
+      - "ghcr.io/sjzar/chatlog:{{ .Tag }}-amd64"
+      - "sjzar/chatlog:{{ .Tag }}-amd64"
+    dockerfile: Dockerfile
+    use: buildx
+    goos: linux
+    goarch: amd64
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.description=chat log tool, easily use your own chat data."
+      - "--label=org.opencontainers.image.url=https://github.com/sjzar/chatlog"
+      - "--label=org.opencontainers.image.source=https://github.com/sjzar/chatlog"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.licenses=Apache-2.0"
+
+  - image_templates:
+      - "ghcr.io/sjzar/chatlog:{{ .Tag }}-arm64"
+      - "sjzar/chatlog:{{ .Tag }}-arm64"
+    dockerfile: Dockerfile
+    use: buildx
+    goos: linux
+    goarch: arm64
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.description=chat log tool, easily use your own chat data."
+      - "--label=org.opencontainers.image.url=https://github.com/sjzar/chatlog"
+      - "--label=org.opencontainers.image.source=https://github.com/sjzar/chatlog"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.licenses=Apache-2.0"
+
+# Docker manifest 配置用于多架构镜像
+docker_manifests:
+  # GitHub Container Registry manifests
+  - name_template: "ghcr.io/sjzar/chatlog:{{ .Tag }}"
+    image_templates:
+      - "ghcr.io/sjzar/chatlog:{{ .Tag }}-amd64"
+      - "ghcr.io/sjzar/chatlog:{{ .Tag }}-arm64"
+
+  # Docker Hub manifests
+  - name_template: "sjzar/chatlog:{{ .Tag }}"
+    image_templates:
+      - "sjzar/chatlog:{{ .Tag }}-amd64"
+      - "sjzar/chatlog:{{ .Tag }}-arm64"
+
+  # GitHub Container Registry latest
+  - name_template: "{{ if not .Prerelease }}ghcr.io/sjzar/chatlog:latest{{ end }}"
+    image_templates:
+      - "ghcr.io/sjzar/chatlog:{{ .Tag }}-amd64"
+      - "ghcr.io/sjzar/chatlog:{{ .Tag }}-arm64"
+
+  # Docker Hub latest
+  - name_template: "{{ if not .Prerelease }}sjzar/chatlog:latest{{ end }}"
+    image_templates:
+      - "sjzar/chatlog:{{ .Tag }}-amd64"
+      - "sjzar/chatlog:{{ .Tag }}-arm64"

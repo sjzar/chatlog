@@ -11,20 +11,22 @@ import (
 
 func init() {
 	rootCmd.AddCommand(keyCmd)
-	keyCmd.Flags().IntVarP(&pid, "pid", "p", 0, "pid")
+	keyCmd.Flags().IntVarP(&keyPID, "pid", "p", 0, "pid")
+	keyCmd.Flags().BoolVarP(&keyForce, "force", "f", false, "force")
+	keyCmd.Flags().BoolVarP(&keyShowXorKey, "xor-key", "x", false, "show xor key")
 }
 
-var pid int
+var (
+	keyPID        int
+	keyForce      bool
+	keyShowXorKey bool
+)
 var keyCmd = &cobra.Command{
 	Use:   "key",
 	Short: "key",
 	Run: func(cmd *cobra.Command, args []string) {
-		m, err := chatlog.New("")
-		if err != nil {
-			log.Err(err).Msg("failed to create chatlog instance")
-			return
-		}
-		ret, err := m.CommandKey(pid)
+		m := chatlog.New()
+		ret, err := m.CommandKey("", keyPID, keyForce, keyShowXorKey)
 		if err != nil {
 			log.Err(err).Msg("failed to get key")
 			return

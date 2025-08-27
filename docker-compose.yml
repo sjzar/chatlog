@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  chatlog:
+    image: sjzar/chatlog:latest
+    restart: unless-stopped
+    ports:
+      # 将主机的 5030 端口映射到 chatlog 容器的 5030 端口
+      # 你可以根据需要修改主机端口，例如 "8080:5030"
+      - "5030:5030"
+    environment:
+      - TZ=Asia/Shanghai
+      # # 微信平台类型，可选：windows, darwin
+      # - CHATLOG_PLATFORM=${CHATLOG_PLATFORM}
+      # # 微信版本，可选：3, 4
+      # - CHATLOG_VERSION=${CHATLOG_VERSION}
+      # # 微信数据密钥
+      # - CHATLOG_DATA_KEY=${CHATLOG_DATA_KEY}
+      # # 微信图片密钥
+      # - CHATLOG_IMG_KEY=${CHATLOG_IMG_KEY}
+      # # 服务地址
+      # - CHATLOG_HTTP_ADDR=${CHATLOG_HTTP_ADDR}
+      # # 是否自动解密
+      # - CHATLOG_AUTO_DECRYPT=${CHATLOG_AUTO_DECRYPT}
+      # 数据目录
+      - CHATLOG_DATA_DIR=/app/data
+      # 工作目录
+      - CHATLOG_WORK_DIR=/app/work
+    volumes:
+      # 数据目录，微信的本地数据目录
+      # 请修改左侧的 /path/to/your/wechat/data 为实际的微信数据目录
+      # 例如 "/Users/sarv/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/wxid_xxx:/app/data"
+      - "/path/to/your/wechat/data:/app/data"
+      # 工作目录，用于保存已解密的数据库文件
+      - "work-dir:/app/work"
+
+volumes:
+  work-dir:
+    driver: local

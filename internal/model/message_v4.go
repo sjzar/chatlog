@@ -90,12 +90,10 @@ func (m *MessageV4) Wrap(talker string) *Message {
 			if _m.Type == 3 && packedInfo.Image != nil {
 				_talkerMd5Bytes := md5.Sum([]byte(talker))
 				talkerMd5 := hex.EncodeToString(_talkerMd5Bytes[:])
-				_m.Contents["imgfile"] = filepath.Join("msg", "attach", talkerMd5, _m.Time.Format("2006-01"), "Img", fmt.Sprintf("%s.dat", packedInfo.Image.Md5))
-				_m.Contents["thumb"] = filepath.Join("msg", "attach", talkerMd5, _m.Time.Format("2006-01"), "Img", fmt.Sprintf("%s_t.dat", packedInfo.Image.Md5))
+				_m.Contents["path"] = filepath.Join("msg", "attach", talkerMd5, _m.Time.Format("2006-01"), "Img", packedInfo.Image.Md5)
 			}
 			if _m.Type == 43 && packedInfo.Video != nil {
-				_m.Contents["videofile"] = filepath.Join("msg", "video", _m.Time.Format("2006-01"), fmt.Sprintf("%s.mp4", packedInfo.Video.Md5))
-				_m.Contents["thumb"] = filepath.Join("msg", "video", _m.Time.Format("2006-01"), fmt.Sprintf("%s_thumb.jpg", packedInfo.Video.Md5))
+				_m.Contents["path"] = filepath.Join("msg", "video", _m.Time.Format("2006-01"), packedInfo.Video.Md5)
 			}
 		}
 	}

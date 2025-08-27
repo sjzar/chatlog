@@ -2,7 +2,6 @@ package chatlog
 
 import (
 	"fmt"
-	"runtime"
 
 	"github.com/sjzar/chatlog/internal/chatlog"
 
@@ -12,34 +11,53 @@ import (
 
 func init() {
 	rootCmd.AddCommand(decryptCmd)
-	decryptCmd.Flags().StringVarP(&dataDir, "data-dir", "d", "", "data dir")
-	decryptCmd.Flags().StringVarP(&workDir, "work-dir", "w", "", "work dir")
-	decryptCmd.Flags().StringVarP(&key, "key", "k", "", "key")
-	decryptCmd.Flags().StringVarP(&decryptPlatform, "platform", "p", runtime.GOOS, "platform")
-	decryptCmd.Flags().IntVarP(&decryptVer, "version", "v", 3, "version")
+	decryptCmd.Flags().StringVarP(&decryptPlatform, "platform", "p", "", "platform")
+	decryptCmd.Flags().IntVarP(&decryptVer, "version", "v", 0, "version")
+	decryptCmd.Flags().StringVarP(&decryptDataDir, "data-dir", "d", "", "data dir")
+	decryptCmd.Flags().StringVarP(&decryptDatakey, "data-key", "k", "", "data key")
+	decryptCmd.Flags().StringVarP(&decryptWorkDir, "work-dir", "w", "", "work dir")
 }
 
 var (
-	dataDir         string
-	workDir         string
-	key             string
 	decryptPlatform string
 	decryptVer      int
+	decryptDataDir  string
+	decryptDatakey  string
+	decryptWorkDir  string
 )
 
 var decryptCmd = &cobra.Command{
 	Use:   "decrypt",
 	Short: "decrypt",
 	Run: func(cmd *cobra.Command, args []string) {
-		m, err := chatlog.New("")
-		if err != nil {
-			log.Err(err).Msg("failed to create chatlog instance")
-			return
-		}
-		if err := m.CommandDecrypt(dataDir, workDir, key, decryptPlatform, decryptVer); err != nil {
+
+		cmdConf := getDecryptConfig()
+
+		m := chatlog.New()
+		if err := m.CommandDecrypt("", cmdConf); err != nil {
 			log.Err(err).Msg("failed to decrypt")
 			return
 		}
 		fmt.Println("decrypt success")
 	},
+}
+
+func getDecryptConfig() map[string]any {
+	cmdConf := make(map[string]any)
+	if len(decryptDataDir) != 0 {
+		cmdConf["data_dir"] = decryptDataDir
+	}
+	if len(decryptDatakey) != 0 {
+		cmdConf["data_key"] = decryptDatakey
+	}
+	if len(decryptWorkDir) != 0 {
+		cmdConf["work_dir"] = decryptWorkDir
+	}
+	if len(decryptPlatform) != 0 {
+		cmdConf["platform"] = decryptPlatform
+	}
+	if decryptVer != 0 {
+		cmdConf["version"] = decryptVer
+	}
+	return cmdConf
 }

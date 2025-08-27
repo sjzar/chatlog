@@ -8,10 +8,13 @@ import (
 	"bytes"
 	"crypto/aes"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/rs/zerolog/log"
 )
 
 // Format defines the header and extension for different image types
@@ -28,11 +31,12 @@ var (
 	GIF     = Format{Header: []byte{0x47, 0x49, 0x46, 0x38}, Ext: "gif"}
 	TIFF    = Format{Header: []byte{0x49, 0x49, 0x2A, 0x00}, Ext: "tiff"}
 	BMP     = Format{Header: []byte{0x42, 0x4D}, Ext: "bmp"}
-	Formats = []Format{JPG, PNG, GIF, TIFF, BMP}
+	WXGF    = Format{Header: []byte{0x77, 0x78, 0x67, 0x66}, Ext: "wxgf"}
+	Formats = []Format{JPG, PNG, GIF, TIFF, BMP, WXGF}
 
 	V4Format1 = Format{Header: []byte{0x07, 0x08, 0x56, 0x31}, AesKey: []byte("cfcd208495d565ef")}
 	V4Format2 = Format{Header: []byte{0x07, 0x08, 0x56, 0x32}, AesKey: []byte("0000000000000000")} // FIXME
-	V4Formats = []Format{V4Format1, V4Format2}
+	V4Formats = []*Format{&V4Format1, &V4Format2}
 
 	// WeChat v4 related constants
 	V4XorKey byte = 0x37               // Default XOR key for WeChat v4 dat files
@@ -185,6 +189,18 @@ func ScanAndSetXorKey(dirPath string) (byte, error) {
 	return V4XorKey, nil
 }
 
+func SetAesKey(key string) {
+	if key == "" {
+		return
+	}
+	decoded, err := hex.DecodeString(key)
+	if err != nil {
+		log.Error().Err(err).Msg("invalid aes key")
+		return
+	}
+	V4Format2.AesKey = decoded
+}
+
 // Dat2ImageV4 processes WeChat v4 dat image files
 // WeChat v4 uses a combination of AES-ECB and XOR encryption
 func Dat2ImageV4(data []byte, aeskey []byte) ([]byte, string, error) {
@@ -256,6 +272,10 @@ func Dat2ImageV4(data []byte, aeskey []byte) ([]byte, string, error) {
 			imgType = format.Ext
 			break
 		}
+	}
+
+	if imgType == "wxgf" {
+		return Wxam2pic(result)
 	}
 
 	if imgType == "" {
