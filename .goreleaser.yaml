@@ -96,6 +96,8 @@ dockers:
       - "ghcr.io/sjzar/chatlog:{{ .Tag }}-amd64"
       - "sjzar/chatlog:{{ .Tag }}-amd64"
     dockerfile: Dockerfile
+    extra_files:
+      - script/docker-entrypoint.sh
     use: buildx
     goos: linux
     goarch: amd64
@@ -114,6 +116,8 @@ dockers:
       - "ghcr.io/sjzar/chatlog:{{ .Tag }}-arm64"
       - "sjzar/chatlog:{{ .Tag }}-arm64"
     dockerfile: Dockerfile
+    extra_files:
+      - script/docker-entrypoint.sh
     use: buildx
     goos: linux
     goarch: arm64
