@@ -6,11 +6,12 @@ import (
 )
 
 type Session struct {
-	UserName string    `json:"userName"`
-	NOrder   int       `json:"nOrder"`
-	NickName string    `json:"nickName"`
-	Content  string    `json:"content"`
-	NTime    time.Time `json:"nTime"`
+	UserName   string    `json:"userName"`
+	NOrder     int       `json:"nOrder"`
+	NickName   string    `json:"nickName"`
+	Content    string    `json:"content"`
+	NTime      time.Time `json:"nTime"`
+	SenderName string    `json:"senderName"` // 群聊最后一条消息的发送者名称, 非群聊时，此值为空或nil，
 }
 
 // CREATE TABLE Session(
@@ -63,11 +64,12 @@ type SessionV3 struct {
 
 func (s *SessionV3) Wrap() *Session {
 	return &Session{
-		UserName: s.StrUsrName,
-		NOrder:   s.NOrder,
-		NickName: s.StrNickName,
-		Content:  s.StrContent,
-		NTime:    time.Unix(int64(s.NTime), 0),
+		UserName:   s.StrUsrName,
+		NOrder:     s.NOrder,
+		NickName:   s.StrNickName,
+		Content:    s.StrContent,
+		NTime:      time.Unix(int64(s.NTime), 0),
+		SenderName: s.StrNickName,
 	}
 }
 
