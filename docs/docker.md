@@ -246,8 +246,8 @@ docker-compose down
 
 #### 配置指南
 
-- 本地配置: 同步数据目录(Data Dir)，可设置为仅发送
-- 远程服务器配置: 设置为仅接收
+- 本地配置: 同步数据目录(Data Dir)，可设置为仅发送；在首次完整同步文件后，建议将 "rescanIntervalS" 设置为 0，全局扫描较为耗时，且扫描过程中会暂停同步
+- 远程服务器配置: 设置为仅接收，同样建议将 "rescanIntervalS" 设置为 0
 - 使用 Docker / Docker Compose 启动 chatlog，将数据目录映射到容器的 `/app/data` 目录
 - 按需配置 `/app/work` 映射目录，可配置到远程服务器本地路径或命名卷
 - 启动容器后，等待首次解密完成后，即可正常请求 API 或接入 MCP 服务

@@ -89,14 +89,22 @@ func (m *MessageV3) Wrap() *Message {
 			if _m.IsChatRoom {
 				_m.Sender = bytesExtra[1]
 			}
-			// FIXME xml 中的 md5 数据无法匹配到 hardlink 记录，所以直接用 proto 数据
-			if _m.Type == 43 {
-				path := bytesExtra[4]
-				parts := strings.Split(filepath.ToSlash(path), "/")
-				if len(parts) > 1 {
-					path = strings.Join(parts[1:], "/")
+
+			// 图片处理
+			if _m.Type == MessageTypeImage {
+				if len(bytesExtra[4]) > 0 {
+					_m.Contents["path"] = ParseBytesExtraPath(bytesExtra[4])
 				}
-				_m.Contents["videofile"] = path
+				if len(bytesExtra[3]) > 0 {
+					_m.Contents["thumbpath"] = ParseBytesExtraPath(bytesExtra[3])
+				}
+			}
+
+			// FIXME xml 中的 md5 数据无法匹配到 hardlink 记录，所以直接用 proto 数据
+			if _m.Type == MessageTypeVideo {
+				if len(bytesExtra[4]) > 0 {
+					_m.Contents["path"] = ParseBytesExtraPath(bytesExtra[4])
+				}
 			}
 		}
 	}
@@ -121,4 +129,12 @@ func ParseBytesExtra(b []byte) map[int]string {
 	}
 
 	return ret
+}
+
+func ParseBytesExtraPath(s string) string {
+	parts := strings.Split(filepath.ToSlash(s), "/")
+	if len(parts) > 1 {
+		return strings.Join(parts[1:], "/")
+	}
+	return s
 }

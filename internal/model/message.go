@@ -358,6 +358,11 @@ func (m *Message) PlainTextContent() string {
 				keylist = append(keylist, path)
 			}
 		}
+		if m.Contents["thumbpath"] != nil {
+			if thumbpath, ok := m.Contents["thumbpath"].(string); ok {
+				keylist = append(keylist, thumbpath)
+			}
+		}
 		return fmt.Sprintf("![图片](http://%s/image/%s)", m.Contents["host"], strings.Join(keylist, ","))
 	case MessageTypeVoice:
 		if voice, ok := m.Contents["voice"]; ok {

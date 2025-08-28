@@ -9,6 +9,8 @@ import (
 
 func init() {
 	rootCmd.AddCommand(serverCmd)
+	serverCmd.PersistentPreRun = initLog
+	serverCmd.PersistentFlags().BoolVar(&Debug, "debug", false, "debug")
 	serverCmd.Flags().StringVarP(&serverAddr, "addr", "a", "", "server address")
 	serverCmd.Flags().StringVarP(&serverPlatform, "platform", "p", "", "platform")
 	serverCmd.Flags().IntVarP(&serverVer, "version", "v", 0, "version")

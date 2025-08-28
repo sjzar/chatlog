@@ -216,6 +216,8 @@ GET /api/v1/chatlog?time=2023-01-01&talker=wxid_xxx
 
 需开启自动解密功能，当收到特定新消息时，可以通过 HTTP POST 请求将消息推送到指定的 URL。
 
+> 延迟测试: 本地服务消息回调延迟约 13 秒; 远程同步消息回调延迟约 45 秒。
+
 #### 0. 回调配置
 
 使用 TUI 模式的话，在 `$HOME/.chatlog/chatlog.json` 配置文件中，新增 `webhook` 配置。  

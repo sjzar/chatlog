@@ -68,6 +68,7 @@ func (s *Service) GetDataKey(info *wechat.Account) (string, error) {
 }
 
 func (s *Service) StartAutoDecrypt() error {
+	log.Info().Msgf("start auto decrypt, data dir: %s", s.conf.GetDataDir())
 	dbGroup, err := filemonitor.NewFileGroup("wechat", s.conf.GetDataDir(), `.*\.db$`, []string{"fts"})
 	if err != nil {
 		return err
@@ -94,7 +95,15 @@ func (s *Service) StopAutoDecrypt() error {
 }
 
 func (s *Service) DecryptFileCallback(event fsnotify.Event) error {
-	if event.Op.Has(fsnotify.Chmod) || !event.Op.Has(fsnotify.Write) {
+	// Local file system
+	// WRITE         "/db_storage/message/message_0.db"
+	// WRITE         "/db_storage/message/message_0.db"
+	// WRITE|CHMOD   "/db_storage/message/message_0.db"
+	// Syncthing
+	// REMOVE        "/app/data/db_storage/session/session.db"
+	// CREATE        "/app/data/db_storage/session/session.db" ← "/app/data/db_storage/session/.syncthing.session.db.tmp"
+	// CHMOD         "/app/data/db_storage/session/session.db"
+	if !(event.Op.Has(fsnotify.Write) || event.Op.Has(fsnotify.Create)) {
 		return nil
 	}
 
