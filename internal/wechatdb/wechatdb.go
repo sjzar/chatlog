@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/rs/zerolog/log"
 	"github.com/sjzar/chatlog/internal/model"
 	"github.com/sjzar/chatlog/internal/wechatdb/datasource"
@@ -133,4 +134,11 @@ func (w *DB) GetMedia(_type string, key string) (*model.Media, error) {
 
 	log.Info().Str("type", _type).Str("key", key).Str("platform", w.platform).Int("version", w.version).Int("data_size", len(media.Data)).Msg("成功获取媒体文件")
 	return media, nil
+}
+
+func (w *DB) SetCallback(group string, callback func(event fsnotify.Event) error) error {
+	if w.ds != nil {
+		return w.ds.SetCallback(group, callback)
+	}
+	return nil
 }

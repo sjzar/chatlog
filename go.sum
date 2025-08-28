@@ -130,10 +130,6 @@ github.com/shirou/gopsutil/v4 v4.25.7 h1:bNb2JuqKuAu3tRlPv5piSmBZyMfecwQ+t/ILq+1
 github.com/shirou/gopsutil/v4 v4.25.7/go.mod h1:XV/egmwJtd3ZQjBpJVY5kndsiOO4IRqy9TQnmm6VP7U=
 github.com/sirupsen/logrus v1.9.3 h1:dueUQJ1C2q9oE3F7wvmSGAaVtTmUizReu6fjN8uqzbQ=
 github.com/sirupsen/logrus v1.9.3/go.mod h1:naHLuLoDiP4jHNo9R0sCBMtWGeIprob74mVsIT4qYEQ=
-github.com/sjzar/go-lame v0.0.9 h1:x/X3I+uKVsx8WeKO5cu4fvkAbm2okOaP1ibeeI3urAU=
-github.com/sjzar/go-lame v0.0.9/go.mod h1:8RmqWcAKSbBAk6bTRV9d8mdDxqK3hY9vFyoJ4DoQE6Y=
-github.com/sjzar/go-silk v0.0.1 h1:cXD9dsIZti3n+g0Fd3IUvLH9A7tyL4jvUsHEyhff21s=
-github.com/sjzar/go-silk v0.0.1/go.mod h1:IXVcHEXKiU9j3ZtHEiGS37OFKkex9pdAhZVcFzAIOlM=
 github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 h1:+jumHNA0Wrelhe64i8F6HNlS8pkoyMv5sreGx2Ry5Rw=
 github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8/go.mod h1:3n1Cwaq1E1/1lhQhtRK2ts/ZwZEhjcQeJQ1RuC6Q/8U=
 github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72 h1:qLC7fQah7D6K1B0ujays3HV9gkFtllcxhzImRR7ArPQ=

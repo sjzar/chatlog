@@ -158,7 +158,7 @@ func (d *DBManager) OpenDB(path string) (*sql.DB, error) {
 	var err error
 	tempPath := path
 	if runtime.GOOS == "windows" {
-		tempPath, err = filecopy.GetTempCopy(path)
+		tempPath, err = filecopy.GetTempCopy("chatlog", path)
 		if err != nil {
 			log.Err(err).Msgf("获取临时拷贝文件 %s 失败", path)
 			return nil, err
