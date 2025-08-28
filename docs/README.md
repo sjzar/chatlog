@@ -13,6 +13,7 @@
 - **[API 文档](api.md)** - HTTP API 接口详细说明
 - **[数据库结构](database.md)** - 微信数据库文件结构分析
 - **[开发指南](development.md)** - 开发环境搭建和贡献指南
+- **[构建指南](README-BUILD.md)** - 项目构建和 CGO 问题解决
 - **[日志系统](logging.md)** - 日志系统配置和使用说明
 
 ### 🐛 故障排除 (troubleshooting-guides/)
