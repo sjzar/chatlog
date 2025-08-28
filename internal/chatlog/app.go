@@ -2,8 +2,11 @@ package chatlog
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/sjzar/chatlog/internal/chatlog/ctx"
@@ -449,8 +452,16 @@ func (a *App) initMenu() {
 	a.menu.AddItem(setting)
 	a.menu.AddItem(selectAccount)
 
+	exportChatRecords := &menu.Item{
+		Index:       9,
+		Name:        "Export Chat Records",
+		Description: "Export chat records to a file",
+		Selected:    a.exportChatRecordsSelected,
+	}
+	a.menu.AddItem(exportChatRecords)
+
 	a.menu.AddItem(&menu.Item{
-		Index:       8,
+		Index:       10,
 		Name:        "退出",
 		Description: "退出程序",
 		Selected: func(i *menu.Item) {
@@ -458,6 +469,188 @@ func (a *App) initMenu() {
 		},
 	})
 }
+
+// exportChatRecordsSelected handles the selection of the "Export Chat Records" menu item.
+func (a *App) exportChatRecordsSelected(i *menu.Item) {
+	// Fetch chat sessions
+	sessionsResponse, err := a.m.db.GetSessions("", 100, 0)
+	if err != nil {
+		a.showError(fmt.Errorf("failed to get chat sessions: %v", err))
+		return
+	}
+
+	if len(sessionsResponse.Items) == 0 {
+		a.showInfo("No chat sessions available to export.")
+		return
+	}
+
+	subMenu := menu.NewSubMenu("Select Chat to Export")
+	for idx, session := range sessionsResponse.Items {
+		// Use session.Talker or session.Name. Assuming session.Talker is the primary identifier.
+		// The actual fields depend on the database.Session struct.
+		// For description, we can use the last message time.
+		talkerName := session.Talker
+		if talkerName == "" {
+			talkerName = "Unknown Talker" // Fallback if Talker is empty
+		}
+		// Format NTime to a readable string, assuming NTime is a time.Time object or similar
+		description := fmt.Sprintf("Last message: %s", session.NTime.Format("2006-01-02 15:04:05"))
+		if session.Name != "" { // If a more friendly name is available
+			description = fmt.Sprintf("Name: %s, %s", session.Name, description)
+		}
+
+
+		item := &menu.Item{
+			Index:       idx + 1,
+			Name:        talkerName,
+			Description: description,
+			Selected: func(selectedTalker string, talkerDisplayName string) func(*menu.Item) {
+				return func(*menu.Item) {
+					exportOptionsMenu := menu.NewSubMenu("Export Options for " + talkerDisplayName)
+					exportOptionsMenu.AddItem(&menu.Item{
+						Index:       1,
+						Name:        "Export today's chat records",
+						Description: "Export chat records from today for " + talkerDisplayName,
+						Selected: func(*menu.Item) {
+							go a.exportChatMessages(selectedTalker, talkerDisplayName, "today")
+						},
+					})
+					exportOptionsMenu.AddItem(&menu.Item{
+						Index:       2,
+						Name:        "Export last 7 days' chat records",
+						Description: "Export chat records from the last 7 days for " + talkerDisplayName,
+						Selected: func(*menu.Item) {
+							go a.exportChatMessages(selectedTalker, talkerDisplayName, "last7days")
+						},
+					})
+
+					// It's important to use a unique page name for each level of submenu
+					// to avoid conflicts and allow proper back navigation with ESC.
+					// However, tview's default ESC behavior with AddPage might just go back one page.
+					// If "submenu" was used for settings, this needs a different name.
+					a.mainPages.AddPage("submenuExportOptions", exportOptionsMenu, true, true)
+					a.SetFocus(exportOptionsMenu)
+				}
+			}(session.Talker, talkerName), // Pass the correct talker identifier and display name
+		}
+		subMenu.AddItem(item)
+	}
+
+	// Use a unique page name for the talker selection submenu
+	a.mainPages.AddPage("submenuExportTalker", subMenu, true, true)
+	a.SetFocus(subMenu)
+}
+
+func sanitizeFilename(name string) string {
+	// Remove invalid characters for most file systems
+	// Keep it simple: replace non-alphanumeric with underscore
+	reg := regexp.MustCompile("[^a-zA-Z0-9_.-]+")
+	return reg.ReplaceAllString(name, "_")
+}
+
+// exportChatMessages handles the logic for exporting chat messages to a file.
+func (a *App) exportChatMessages(talkerID string, talkerDisplayName string, dateRangeType string) {
+	modal := tview.NewModal().SetText(fmt.Sprintf("Exporting messages for %s...", talkerDisplayName))
+	a.QueueUpdateDraw(func() {
+		a.mainPages.AddPage("modalExporting", modal, true, true)
+		a.SetFocus(modal)
+	})
+
+	defer a.QueueUpdateDraw(func() {
+		a.mainPages.RemovePage("modalExporting")
+	})
+
+	var startTime, endTime time.Time
+	now := time.Now()
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	fileNameDateSuffix := ""
+
+	switch dateRangeType {
+	case "today":
+		startTime = todayStart
+		endTime = todayStart.Add(24 * time.Hour).Add(-1 * time.Nanosecond) // End of today
+		fileNameDateSuffix = startTime.Format("2006-01-02")
+	case "last7days":
+		startTime = todayStart.AddDate(0, 0, -6) // 7 days ago including today
+		endTime = todayStart.Add(24 * time.Hour).Add(-1 * time.Nanosecond) // End of today
+		fileNameDateSuffix = fmt.Sprintf("%s_to_%s", startTime.Format("2006-01-02"), endTime.Format("2006-01-02"))
+	default:
+		a.QueueUpdateDraw(func() {
+			a.showError(fmt.Errorf("invalid date range type: %s", dateRangeType))
+		})
+		return
+	}
+
+	// Fetch messages (limit 0 for all messages in range)
+	// Assuming model.Message has CreateTime (time.Time), Speaker (string), Content (string)
+	messages, err := a.m.db.GetMessages(startTime, endTime, talkerID, "", "", 0, 0)
+	if err != nil {
+		a.QueueUpdateDraw(func() {
+			a.showError(fmt.Errorf("failed to fetch messages for %s: %v", talkerDisplayName, err))
+		})
+		return
+	}
+
+	if len(messages) == 0 {
+		a.QueueUpdateDraw(func() {
+			a.showInfo(fmt.Sprintf("No messages found for %s in the selected date range (%s).", talkerDisplayName, dateRangeType))
+		})
+		return
+	}
+
+	var contentBuilder strings.Builder
+	for _, msg := range messages {
+		// Assuming msg.CreateTime is time.Time, msg.Speaker, msg.StrContent
+		// Adjust field names if model.Message struct is different
+		// Example: msg.CreateTime.Format might need to be msg.Timestamp if that's the field name
+		// For now, let's assume it's msg.NTime like in Session for consistency if it's a direct time field
+		// Or it might be CreateTime as is common. Let's use CreateTime as a placeholder.
+		// If GetMessages returns model.Message, we need its definition.
+		// Let's assume it's like: type Message struct { CreateTime int64; Speaker string; Content string; ... }
+		// And that CreateTime is a Unix timestamp.
+		// Or if CreateTime is already time.Time, then msg.CreateTime.Format(...) is fine.
+		// The database.GetMessages returns []*model.Message. The model.Message struct has `CreateTime int64`.
+		var msgTime time.Time
+		if msg.CreateTime > 0 { // Assuming CreateTime is int64 Unix timestamp
+			msgTime = time.Unix(msg.CreateTime, 0)
+		} else {
+			msgTime = time.Now() // Fallback, though unlikely if CreateTime is primary timestamp
+		}
+		contentBuilder.WriteString(fmt.Sprintf("[%s] %s: %s\n", msgTime.Format("2006-01-02 15:04:05"), msg.Speaker, msg.Content))
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		a.QueueUpdateDraw(func() {
+			a.showError(fmt.Errorf("failed to get user home directory: %v", err))
+		})
+		return
+	}
+
+	exportDir := filepath.Join(homeDir, "chatlog_exports")
+	if err := os.MkdirAll(exportDir, 0755); err != nil {
+		a.QueueUpdateDraw(func() {
+			a.showError(fmt.Errorf("failed to create export directory %s: %v", exportDir, err))
+		})
+		return
+	}
+
+	baseFilename := sanitizeFilename(talkerDisplayName)
+	filename := fmt.Sprintf("%s_%s.txt", baseFilename, fileNameDateSuffix)
+	filePath := filepath.Join(exportDir, filename)
+
+	if err := os.WriteFile(filePath, []byte(contentBuilder.String()), 0644); err != nil {
+		a.QueueUpdateDraw(func() {
+			a.showError(fmt.Errorf("failed to save chat log to %s: %v", filePath, err))
+		})
+		return
+	}
+
+	a.QueueUpdateDraw(func() {
+		a.showInfo(fmt.Sprintf("Chat log for %s exported successfully to:\n%s", talkerDisplayName, filePath))
+	})
+}
+
 
 // settingItem 表示一个设置项
 type settingItem struct {
