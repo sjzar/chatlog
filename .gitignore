@@ -27,5 +27,8 @@ go.work.sum
 # syncthing files
 .stfolder
 
+# JetBrains
+.idea
+
 chatlog.exe# Added by goreleaser init:
 dist/

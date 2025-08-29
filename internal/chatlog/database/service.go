@@ -99,7 +99,7 @@ func (s *Service) GetChatRooms(key string, limit, offset int) (*wechatdb.GetChat
 	return s.db.GetChatRooms(key, limit, offset)
 }
 
-// GetSession retrieves session information
+// GetSessions retrieves session information
 func (s *Service) GetSessions(key string, limit, offset int) (*wechatdb.GetSessionsResp, error) {
 	return s.db.GetSessions(key, limit, offset)
 }
