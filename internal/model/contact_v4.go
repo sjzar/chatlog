@@ -38,6 +38,6 @@ func (c *ContactV4) Wrap() *Contact {
 		Alias:    c.Alias,
 		Remark:   c.Remark,
 		NickName: c.NickName,
-		IsFriend: c.LocalType != 3,
+		IsFriend: c.LocalType != 3 && c.LocalType != 0,
 	}
 }
