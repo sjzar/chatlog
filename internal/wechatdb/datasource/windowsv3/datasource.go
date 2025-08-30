@@ -56,7 +56,7 @@ var Groups = []*dbm.Group{
 	},
 	{
 		Name:      Voice,
-		Pattern:   `^MediaMSG([0-9]?[0-9])?\.db$`,
+		Pattern:   `^MediaMSG([0-9]*)\.db$`, // 修复：支持任意多位数字，包括MediaMSG16.db
 		BlackList: []string{},
 	},
 }
@@ -111,11 +111,11 @@ func New(path string) (*DataSource, error) {
 	return ds, nil
 }
 
-func (ds *DataSource) SetCallback(group string, callback func(event fsnotify.Event) error) error {
-	if group == "chatroom" {
-		group = Contact
+func (ds *DataSource) SetCallback(name string, callback func(event fsnotify.Event) error) error {
+	if name == "chatroom" {
+		name = Contact
 	}
-	return ds.dbm.AddCallback(group, callback)
+	return ds.dbm.AddCallback(name, callback)
 }
 
 // initMessageDbs 初始化消息数据库
@@ -206,10 +206,6 @@ func (ds *DataSource) initMessageDbs() error {
 		} else {
 			infos[i].EndTime = infos[i+1].StartTime
 		}
-	}
-	if len(ds.messageInfos) > 0 && len(infos) < len(ds.messageInfos) {
-		log.Warn().Msgf("message db count decreased from %d to %d, skip init", len(ds.messageInfos), len(infos))
-		return nil
 	}
 	ds.messageInfos = infos
 	return nil
@@ -728,7 +724,10 @@ func (ds *DataSource) GetMedia(ctx context.Context, _type string, key string) (*
 }
 
 func (ds *DataSource) GetVoice(ctx context.Context, key string) (*model.Media, error) {
+	log.Info().Str("key", key).Msg("开始获取语音数据 (Windows V3)")
+
 	if key == "" {
+		log.Error().Msg("语音key为空")
 		return nil, errors.ErrKeyEmpty
 	}
 
@@ -739,36 +738,75 @@ func (ds *DataSource) GetVoice(ctx context.Context, key string) (*model.Media, e
 	`
 	args := []interface{}{key}
 
+	log.Debug().Str("query", query).Interface("args", args).Msg("准备执行语音数据库查询")
+
 	dbs, err := ds.dbm.GetDBs(Voice)
 	if err != nil {
+		log.Error().Err(err).Str("key", key).Msg("获取语音数据库连接失败")
 		return nil, errors.DBConnectFailed("", err)
 	}
 
-	for _, db := range dbs {
+	log.Debug().Str("key", key).Int("db_count", len(dbs)).Msg("获取到语音数据库连接")
+
+	var lastError error
+	for i, db := range dbs {
+		log.Debug().Str("key", key).Int("db_index", i).Msg("在数据库中查询语音数据")
+
 		rows, err := db.QueryContext(ctx, query, args...)
 		if err != nil {
-			return nil, errors.QueryFailed(query, err)
+			// 检查是否是表不存在错误
+			if strings.Contains(err.Error(), "no such table: Media") {
+				log.Warn().Err(err).Str("key", key).Int("db_index", i).Msg("当前数据库没有Media表，尝试下一个数据库")
+				lastError = err
+				continue
+			}
+
+			log.Error().Err(err).Str("key", key).Int("db_index", i).Str("query", query).Msg("执行语音查询失败")
+			lastError = err
+			continue
 		}
 		defer rows.Close()
 
+		rowCount := 0
 		for rows.Next() {
+			rowCount++
+			log.Debug().Str("key", key).Int("db_index", i).Int("row_index", rowCount).Msg("找到语音数据行")
+
 			var voiceData []byte
 			err := rows.Scan(
 				&voiceData,
 			)
 			if err != nil {
-				return nil, errors.ScanRowFailed(err)
+				log.Error().Err(err).Str("key", key).Int("db_index", i).Int("row_index", rowCount).Msg("扫描语音数据行失败")
+				lastError = err
+				continue
 			}
+
+			log.Debug().Str("key", key).Int("db_index", i).Int("row_index", rowCount).Int("voice_data_size", len(voiceData)).Msg("扫描到语音数据")
+
 			if len(voiceData) > 0 {
+				log.Info().Str("key", key).Int("db_index", i).Int("voice_data_size", len(voiceData)).Msg("成功获取语音数据 (Windows V3)")
 				return &model.Media{
 					Type: "voice",
 					Key:  key,
 					Data: voiceData,
 				}, nil
+			} else {
+				log.Warn().Str("key", key).Int("db_index", i).Int("row_index", rowCount).Msg("语音数据为空，继续查找")
 			}
+		}
+
+		if rowCount == 0 {
+			log.Debug().Str("key", key).Int("db_index", i).Msg("在当前数据库中未找到语音数据")
 		}
 	}
 
+	log.Warn().Str("key", key).Int("searched_db_count", len(dbs)).Msg("在所有语音数据库中都未找到数据")
+
+	// 如果有错误信息，返回最后一个错误；否则返回未找到错误
+	if lastError != nil {
+		return nil, lastError
+	}
 	return nil, errors.ErrMediaNotFound
 }
 

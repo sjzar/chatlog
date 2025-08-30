@@ -7,6 +7,8 @@ import (
 	"github.com/sjzar/go-silk"
 )
 
+// Silk2MP3 将SILK格式的音频数据转换为MP3格式
+// 使用上游版本的实现，支持微信语音消息的SILK到MP3转换
 func Silk2MP3(data []byte) ([]byte, error) {
 
 	sd := silk.SilkInit()

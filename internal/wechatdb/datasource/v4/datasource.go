@@ -703,7 +703,10 @@ func (ds *DataSource) IsExist(_db string, table string) bool {
 }
 
 func (ds *DataSource) GetVoice(ctx context.Context, key string) (*model.Media, error) {
+	log.Info().Str("key", key).Msg("开始获取语音数据 (V4)")
+
 	if key == "" {
+		log.Error().Msg("语音key为空")
 		return nil, errors.ErrKeyEmpty
 	}
 
@@ -714,36 +717,60 @@ func (ds *DataSource) GetVoice(ctx context.Context, key string) (*model.Media, e
 	`
 	args := []interface{}{key}
 
+	log.Debug().Str("query", query).Interface("args", args).Msg("准备执行语音数据库查询")
+
 	dbs, err := ds.dbm.GetDBs(Voice)
 	if err != nil {
+		log.Error().Err(err).Str("key", key).Msg("获取语音数据库连接失败")
 		return nil, errors.DBConnectFailed("", err)
 	}
 
-	for _, db := range dbs {
+	log.Debug().Str("key", key).Int("db_count", len(dbs)).Msg("获取到语音数据库连接")
+
+	for i, db := range dbs {
+		log.Debug().Str("key", key).Int("db_index", i).Msg("在数据库中查询语音数据")
+
 		rows, err := db.QueryContext(ctx, query, args...)
 		if err != nil {
+			log.Error().Err(err).Str("key", key).Int("db_index", i).Str("query", query).Msg("执行语音查询失败")
 			return nil, errors.QueryFailed(query, err)
 		}
 		defer rows.Close()
 
+		rowCount := 0
 		for rows.Next() {
+			rowCount++
+			log.Debug().Str("key", key).Int("db_index", i).Int("row_index", rowCount).Msg("找到语音数据行")
+
 			var voiceData []byte
 			err := rows.Scan(
 				&voiceData,
 			)
 			if err != nil {
+				log.Error().Err(err).Str("key", key).Int("db_index", i).Int("row_index", rowCount).Msg("扫描语音数据行失败")
 				return nil, errors.ScanRowFailed(err)
 			}
+
+			log.Debug().Str("key", key).Int("db_index", i).Int("row_index", rowCount).Int("voice_data_size", len(voiceData)).Msg("扫描到语音数据")
+
 			if len(voiceData) > 0 {
+				log.Info().Str("key", key).Int("db_index", i).Int("voice_data_size", len(voiceData)).Msg("成功获取语音数据 (V4)")
 				return &model.Media{
 					Type: "voice",
 					Key:  key,
 					Data: voiceData,
 				}, nil
+			} else {
+				log.Warn().Str("key", key).Int("db_index", i).Int("row_index", rowCount).Msg("语音数据为空，继续查找")
 			}
+		}
+
+		if rowCount == 0 {
+			log.Debug().Str("key", key).Int("db_index", i).Msg("在当前数据库中未找到语音数据")
 		}
 	}
 
+	log.Warn().Str("key", key).Int("searched_db_count", len(dbs)).Msg("在所有语音数据库中都未找到数据")
 	return nil, errors.ErrMediaNotFound
 }
 

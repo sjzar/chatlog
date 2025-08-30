@@ -175,6 +175,45 @@ macOS 用户在获取密钥前需要临时关闭 SIP（系统完整性保护）�
 
 > Apple Silicon 用户注意：确保微信、chatlog 和终端都不在 Rosetta 模式下运行
 
+## 调试功能
+
+### 语音消息调试
+
+如果遇到语音消息无法获取的问题（如 "no such table: Media" 错误），可以使用新增的详细日志功能进行调试：
+
+#### 启用调试日志
+
+```bash
+# 启动服务时启用详细日志
+chatlog server --debug
+
+# 或者在Terminal UI模式下选择对应选项
+```
+
+#### 使用测试脚本
+
+项目提供了专门的测试脚本来验证语音消息功能：
+
+**Linux/macOS:**
+```bash
+./test_voice_logs.sh "/path/to/wechat/data" "语音消息key"
+```
+
+**Windows:**
+```cmd
+test_voice_logs.bat "C:\Users\Username\Documents\WeChat Files\wxid_xxx" "语音消息key"
+```
+
+#### 调试日志层级
+
+调试日志涵盖以下层面：
+- **HTTP请求层**: 记录请求参数和响应状态
+- **数据库层**: 记录SQL查询执行和结果
+- **语音转换层**: 记录SILK到MP3的转换过程
+- **错误详情**: 详细的错误信息和上下文
+
+查看 [语音调试指南](docs/voice_debug_guide.md) 获取详细的调试说明。
+
 ## HTTP API
 
 启动 HTTP 服务后（默认地址 `http://127.0.0.1:5030`），可通过以下 API 访问数据：
