@@ -83,11 +83,12 @@ func New(app, path, name, envPrefix string, writeConfig bool) (*Manager, error) 
 	}
 
 	return &Manager{
-		App:       app,
-		EnvPrefix: envPrefix,
-		Path:      path,
-		Name:      name,
-		Viper:     v,
+		App:         app,
+		EnvPrefix:   envPrefix,
+		Path:        path,
+		Name:        name,
+		Viper:       v,
+		WriteConfig: writeConfig,
 	}, nil
 }
 
@@ -95,6 +96,7 @@ func New(app, path, name, envPrefix string, writeConfig bool) (*Manager, error) 
 // It unmarshals the configuration into the provided conf interface.
 func (c *Manager) Load(conf interface{}) error {
 	if err := c.Viper.ReadInConfig(); err != nil {
+		log.Error().Err(err).Msg("read config failed")
 		if c.WriteConfig {
 			if err := c.Viper.SafeWriteConfig(); err != nil {
 				return err

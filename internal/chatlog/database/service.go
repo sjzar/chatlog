@@ -116,6 +116,7 @@ func (s *Service) initWebhook() error {
 	s.webhookCancel = cancel
 	hooks := s.webhook.GetHooks(ctx, s.db)
 	for _, hook := range hooks {
+		log.Info().Msgf("set callback %#v", hook)
 		if err := s.db.SetCallback(hook.Group(), hook.Callback); err != nil {
 			log.Error().Err(err).Msgf("set callback %#v failed", hook)
 			return err
