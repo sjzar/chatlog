@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	DefalutHTTPAddr = "127.0.0.1:5030"
+	DefalutHTTPAddr = "0.0.0.0:5030"
 )
 
 // Context is a context for a chatlog.
