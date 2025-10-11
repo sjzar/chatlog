@@ -13,7 +13,6 @@ package filecopy
 import (
 	"context"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"os"
 	"path/filepath"
@@ -24,19 +23,49 @@ import (
 	"time"
 
 	"github.com/cespare/xxhash"
+	"github.com/rs/zerolog/log"
 )
 
-// Configuration constants for cache management and cleanup policies.
+// Configuration constants for cache management and behavior tuning.
 const (
-	// CleanupDelayAfterStart specifies the delay before starting cleanup after manager initialization (1 minute).
-	CleanupDelayAfterStart = 1 * time.Minute
+	// CleanupInterval defines how often to run unified cleanup (1 minute).
+	// First run is delayed by CleanupInterval after manager initialization.
+	CleanupInterval = 1 * time.Minute
 
 	// OrphanFileCleanupThreshold defines when orphaned files should be cleaned up (10 minutes).
 	OrphanFileCleanupThreshold = 10 * time.Minute
 
 	// MaxCacheEntries defines the maximum number of files to keep in the cache to prevent memory leaks.
 	MaxCacheEntries = 10000 // Reasonable limit for most use cases
+
+	// RecentFileProtectionWindow prevents deletion of recently modified/accessed files.
+	RecentFileProtectionWindow = 2 * CleanupInterval
+
+	// DedupSkipWindow skips version deduplication for very recent files during periodic cleanup.
+	DedupSkipWindow = CleanupInterval
+
+	// PathHashHexLen limits path-hash length in filenames (increase to lower collision risk).
+	PathHashHexLen = 12
+
+	// DataHashHexLen limits data-hash length in filenames.
+	DataHashHexLen = 16
+
+	// MaxBaseNameLen limits base filename length in temp file naming.
+	MaxBaseNameLen = 100
 )
+
+// Version detection policy for generating data hash in file naming and cache keys.
+type VersionDetectionMode int
+
+const (
+	// VersionDetectContentHash computes data hash from entire file content (strong consistency).
+	VersionDetectContentHash VersionDetectionMode = iota
+	// VersionDetectSizeModTime computes data hash from size+modtime only (faster, weaker consistency).
+	VersionDetectSizeModTime
+)
+
+// VersionDetection controls how data hash is computed. Adjust as needed.
+const VersionDetection = VersionDetectContentHash
 
 // Manager instances per instanceID for proper isolation.
 var (
@@ -47,16 +76,16 @@ var (
 // FileCopyManager manages temporary file copies with persistent caching capabilities.
 // It provides thread-safe operations for creating, accessing, and cleaning up temporary files.
 type FileCopyManager struct {
-	instanceID   string             // Instance identifier for this manager
-	tempDir      string             // Base directory for storing temporary files
-	fileIndex    sync.Map           // File index: key -> *FileIndexEntry (thread-safe)
-	lastAccess   time.Time          // Last access time for TTL cleanup
-	startTime    time.Time          // Manager initialization time
-	deletionChan chan string        // Async deletion channel for this instance
-	ctx          context.Context    // Context for goroutine lifecycle management
-	cancel       context.CancelFunc // Cancel function for graceful shutdown
-	wg           sync.WaitGroup     // WaitGroup for goroutine synchronization
-	cacheSize    int64              // Current number of cached entries (atomic)
+	instanceID string             // Instance identifier for this manager
+	tempDir    string             // Base directory for storing temporary files
+	fileIndex  sync.Map           // File index: key -> *FileIndexEntry (thread-safe)
+	lastAccess time.Time          // Last access time for TTL cleanup
+	startTime  time.Time          // Manager initialization time
+	ctx        context.Context    // Context for goroutine lifecycle management
+	cancel     context.CancelFunc // Cancel function for graceful shutdown
+	wg         sync.WaitGroup     // WaitGroup for goroutine synchronization
+	cacheSize  int64              // Current number of cached entries (atomic)
+	pathLocks  sync.Map           // Per-original-path locks to prevent duplicate concurrent copies
 }
 
 // FileIndexEntry represents an indexed temporary file with comprehensive metadata.
@@ -72,7 +101,7 @@ type FileIndexEntry struct {
 	PathHash     string       // Path hash for collision detection (immutable after creation)
 	DataHash     string       // Content hash for file integrity verification (immutable after creation)
 	BaseName     string       // Base name for multi-version cleanup (immutable after creation)
-	Extension    string       // File extension for proper categorization (immutable after creation)
+	Extension    string       // File extension (normalized, without leading dot) (immutable after creation)
 }
 
 // GetLastAccess returns the last access time in a thread-safe manner
@@ -132,12 +161,16 @@ func parseHashComponents(combinedHash string) (pathHash, dataHash string) {
 	return "", ""
 }
 
-// isAuxiliaryDatabaseFile checks if a file is an auxiliary database file that should be ignored
-func isAuxiliaryDatabaseFile(expectedExt, actualExt string) bool {
-	if expectedExt == "db" && (actualExt == "db-shm" || actualExt == "db-wal") {
-		return true
+// declaredExtFromName extracts the declared extension (without dot) from a temp filename
+// using the naming convention: instanceID_+baseName_+ext_+pathHash_+dataHash.ext
+// Returns ext and true on success; otherwise false.
+func declaredExtFromName(fileName string) (string, bool) {
+	parts := strings.Split(fileName, "_+")
+	if len(parts) < 5 {
+		return "", false
 	}
-	return false
+	// ext is the third from the end
+	return parts[len(parts)-3], true
 }
 
 // toIndexEntry converts the candidate to a FileIndexEntry
@@ -154,7 +187,7 @@ func (c *indexCandidate) toIndexEntry() *FileIndexEntry {
 		PathHash:     pathHash,
 		DataHash:     dataHash,
 		BaseName:     c.baseName,
-		Extension:    filepath.Ext(c.filePath),
+		Extension:    c.ext, // normalized without dot
 	}
 }
 
@@ -167,23 +200,22 @@ func (fm *FileCopyManager) parseFileCandidate(fileName, filePath string) *indexC
 		return nil
 	}
 
-	// Parse filename pattern using "_+" separator
+	// Parse filename pattern using "_+" separator, but allow baseName to contain the token.
+	// Format: instanceID _+ baseName (can contain _+) _+ ext _+ pathHash _+ dataHash.ext
 	parts := strings.Split(fileName, "_+")
 	if len(parts) < 5 {
 		return nil // Need at least: instanceID, baseName, ext, pathHash, dataHash
 	}
-
-	// Check if first part matches our instanceID
 	if parts[0] != fm.instanceID {
 		return nil
 	}
+	// Extract from right to left to tolerate _+ in baseName
+	// ... [0]=instanceID, [1:len-3]=baseName parts, [len-3]=ext, [len-2]=pathHash, [len-1]=dataHash.ext
+	ext := parts[len(parts)-3]
+	pathHash := parts[len(parts)-2]
+	dataHashPart := parts[len(parts)-1]
+	baseName := strings.Join(parts[1:len(parts)-3], "_+")
 
-	baseName := parts[1]
-	ext := parts[2]
-	pathHash := parts[3]
-
-	// Extract dataHash from the last part (remove file extension)
-	dataHashPart := parts[4]
 	dataHash := dataHashPart
 	if dotIndex := strings.Index(dataHashPart, "."); dotIndex != -1 {
 		dataHash = dataHashPart[:dotIndex]
@@ -192,11 +224,6 @@ func (fm *FileCopyManager) parseFileCandidate(fileName, filePath string) *indexC
 	// Critical: Verify actual file extension matches declared extension
 	// This prevents indexing of auxiliary files like *.db-shm, *.db-wal when we expect *.db
 	actualExt := extractFileExtension(fileName)
-
-	// For database files, ignore auxiliary files (.db-shm, .db-wal) if we're looking for .db
-	if isAuxiliaryDatabaseFile(ext, actualExt) {
-		return nil // Skip auxiliary database files
-	}
 
 	// Strict extension matching: declared ext must match actual file extension
 	if ext != actualExt {
@@ -276,87 +303,91 @@ func newManager(instanceID string) *FileCopyManager {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	fm := &FileCopyManager{
-		instanceID:   instanceID,
-		tempDir:      tempDir,
-		lastAccess:   time.Now(),
-		startTime:    time.Now(),
-		deletionChan: make(chan string, 10000), // 10k buffer for async deletion
-		ctx:          ctx,
-		cancel:       cancel,
+		instanceID: instanceID,
+		tempDir:    tempDir,
+		lastAccess: time.Now(),
+		startTime:  time.Now(),
+		ctx:        ctx,
+		cancel:     cancel,
 	}
 
-	// Build file index immediately during initialization
-	fm.buildFileIndex()
+	// Build initial file index during initialization
+	fm.rebuildIndexAndCleanup()
 
 	// Start managed goroutines with proper lifecycle
-	fm.wg.Add(2)
-	go fm.asyncDeletionWorker()
-	go fm.scheduleDelayedCleanup()
+	fm.wg.Add(1)
+	go fm.periodicCleanupWorker()
 
 	return fm
 }
 
-// asyncDeletionWorker processes file deletion requests asynchronously for this manager instance
-func (fm *FileCopyManager) asyncDeletionWorker() {
-	defer fm.wg.Done()
-
-	for {
-		select {
-		case <-fm.ctx.Done():
-			// Context cancelled, drain remaining deletions before exit
-			for {
-				select {
-				case filePath, ok := <-fm.deletionChan:
-					if !ok {
-						return // Channel closed
-					}
-					fm.processDeletion(filePath)
-				default:
-					return // No more deletions to process
-				}
-			}
-		case filePath, ok := <-fm.deletionChan:
-			if !ok {
-				return // Channel closed, exit goroutine
-			}
-			fm.processDeletion(filePath)
-		}
-	}
-}
-
-// processDeletion handles a single file deletion with safety checks
-func (fm *FileCopyManager) processDeletion(filePath string) {
+// processDeletionInline deletes a file inline with safety delay and debug logging on failure.
+func (fm *FileCopyManager) processDeletionInline(filePath string) {
 	// Skip .tmp files to avoid interfering with atomic operations
 	if strings.Contains(filePath, ".tmp.") {
 		return
 	}
-
-	// Add small delay to prevent race conditions with concurrent atomic rename operations
-	// This ensures that any ongoing rename operations from other goroutines complete first
-	time.Sleep(10 * time.Millisecond)
-
-	// Allow deletion failures (file might still be in use)
-	os.Remove(filePath)
+	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+		log.Debug().Err(err).Str("path", filePath).Msg("filecopy: delete failed")
+	}
 }
 
-// buildFileIndex scans the temporary directory and organizes ALL instanceID prefixed files.
-// This is a one-time operation that enables O(1) lookups and eliminates repeated directory scanning.
+// periodicCleanupWorker runs unified cleanup periodically.
+// First run is delayed by CleanupInterval, then runs every CleanupInterval.
+func (fm *FileCopyManager) periodicCleanupWorker() {
+	defer fm.wg.Done()
+
+	ticker := time.NewTicker(CleanupInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-fm.ctx.Done():
+			return // Context cancelled, exit
+		case <-ticker.C:
+			fm.rebuildIndexAndCleanup()
+		}
+	}
+}
+
+// rebuildIndexAndCleanup performs unified cleanup by scanning the temporary directory.
+// This function is called:
+//  1. Once during manager initialization
+//  2. Periodically every CleanupInterval (1 minute)
 //
-// Version Deduplication:
-// When multiple versions of the same file exist (same instanceID + baseName + hash),
-// only the version with the highest timestamp is kept in the index.
-// Older versions are queued for asynchronous deletion to prevent disk space waste.
-func (fm *FileCopyManager) buildFileIndex() {
+// It performs the following tasks:
+//  1. Scans all files belonging to this instanceID
+//  2. Groups files by version key (same file, different versions)
+//  3. Keeps only the latest version of each file
+//  4. Removes orphaned files (not in index, older than threshold)
+//  5. Performs LRU cleanup if cache size exceeds limit
+//
+// IMPORTANT: Uses incremental update strategy to avoid concurrent access issues.
+// The index is NOT cleared during cleanup, only updated incrementally.
+func (fm *FileCopyManager) rebuildIndexAndCleanup() {
 	entries, err := os.ReadDir(fm.tempDir)
 	if err != nil {
 		return // Directory doesn't exist or is inaccessible, skip indexing
 	}
 
 	expectedPrefix := fm.instanceID + "_+"
+	now := time.Now()
+	recentTimeThreshold := now.Add(-RecentFileProtectionWindow)
 
-	// Temporary map to collect all versions of each file
-	// key: versionKey (instanceID_baseName_ext_pathHash), value: slice of candidates with timestamps
-	versionCandidates := make(map[string][]*indexCandidate)
+	// Only use veryRecentThreshold during periodic cleanup (not during initialization)
+	// During init, we want to index all files immediately
+	isPeriodicCleanup := now.Sub(fm.startTime) > CleanupInterval
+	var veryRecentThreshold time.Time
+	if isPeriodicCleanup {
+		veryRecentThreshold = now.Add(-DedupSkipWindow)
+	}
+
+	// Build set of on-disk files later; avoid snapshotting index here to reduce coupling
+
+	// Track valid files and latest version per versionKey
+	// versionKey: instanceID_baseName_ext_pathHash
+	latestByKey := make(map[string]*indexCandidate)
+	diskFiles := make(map[string]*indexCandidate) // All valid files on disk
 
 	// First pass: collect all matching files and group by version key
 	for _, entry := range entries {
@@ -368,52 +399,108 @@ func (fm *FileCopyManager) buildFileIndex() {
 
 		// Parse filename: instanceID_+baseName_+ext_+pathHash_+dataHash.ext
 		if candidate := fm.parseFileCandidate(entry.Name(), filePath); candidate != nil {
+			// Always add to diskFiles so third pass knows file exists
+			diskFiles[filePath] = candidate
+
+			// Skip very recent files from version deduplication during periodic cleanup only
+			// During initialization, process all files normally
+			if isPeriodicCleanup && candidate.fileInfo.ModTime().After(veryRecentThreshold) {
+				continue // Skip version grouping for very recent files during periodic cleanup
+			}
+
 			// Extract components for version grouping
 			pathHash, _ := parseHashComponents(candidate.hash)
-
-			// Group by version key (excludes dataHash for version deduplication)
 			versionKey := fm.generateVersionKey(fm.instanceID, candidate.baseName, candidate.ext, pathHash)
-			versionCandidates[versionKey] = append(versionCandidates[versionKey], candidate)
-		}
-	}
-
-	// Second pass: for each version group, keep only the latest version
-	for _, candidateList := range versionCandidates {
-		if len(candidateList) == 1 {
-			// Only one version, use it directly
-			candidate := candidateList[0]
-			if indexEntry := candidate.toIndexEntry(); indexEntry != nil {
-				// Use full cache key for storage
-				pathHash, dataHash := parseHashComponents(candidate.hash)
-				cacheKey := fm.generateCacheKey(fm.instanceID, candidate.baseName, candidate.ext, pathHash, dataHash)
-				fm.fileIndex.Store(cacheKey, indexEntry)
-				atomic.AddInt64(&fm.cacheSize, 1)
+			if cur := latestByKey[versionKey]; cur == nil || candidate.timestamp > cur.timestamp {
+				latestByKey[versionKey] = candidate
 			}
 		} else {
-			// Multiple versions exist, find the latest one and delete others
-			latest := fm.findLatestCandidate(candidateList)
-
-			// Store the latest version using full cache key
-			if indexEntry := latest.toIndexEntry(); indexEntry != nil {
-				pathHash, dataHash := parseHashComponents(latest.hash)
-				cacheKey := fm.generateCacheKey(fm.instanceID, latest.baseName, latest.ext, pathHash, dataHash)
-				fm.fileIndex.Store(cacheKey, indexEntry)
-				atomic.AddInt64(&fm.cacheSize, 1)
-			}
-
-			// Queue older versions for deletion
-			for _, candidate := range candidateList {
-				if candidate != latest {
-					select {
-					case fm.deletionChan <- candidate.filePath:
-					default:
-						// Channel full, delete synchronously
-						os.Remove(candidate.filePath)
+			// File doesn't match expected pattern. Consider orphan cleanup.
+			if info, err := entry.Info(); err == nil {
+				name := entry.Name()
+				// Never delete temp intermediates
+				if strings.Contains(filePath, ".tmp.") {
+					continue
+				}
+				// If declared ext exists and differs from actual ext, ignore (e.g., .db-wal/.db-shm)
+				if declared, ok := declaredExtFromName(name); ok {
+					actual := extractFileExtension(name)
+					if declared != actual {
+						continue
 					}
+				}
+				if now.Sub(info.ModTime()) > OrphanFileCleanupThreshold {
+					fm.processDeletionInline(filePath)
 				}
 			}
 		}
 	}
+
+	// Second pass: ensure each latest version is present in index
+	for _, latest := range latestByKey {
+		pathHash, dataHash := parseHashComponents(latest.hash)
+		latestCacheKey := fm.generateCacheKey(fm.instanceID, latest.baseName, latest.ext, pathHash, dataHash)
+		indexEntry := latest.toIndexEntry()
+		if _, loaded := fm.fileIndex.LoadOrStore(latestCacheKey, indexEntry); !loaded {
+			atomic.AddInt64(&fm.cacheSize, 1)
+		}
+	}
+
+	// Third pass: queue old versions for deletion (safe window)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), expectedPrefix) {
+			continue
+		}
+		filePath := filepath.Join(fm.tempDir, entry.Name())
+		candidate := fm.parseFileCandidate(entry.Name(), filePath)
+		if candidate == nil {
+			continue
+		}
+		// Skip very recent files in periodic cleanup
+		if isPeriodicCleanup && candidate.fileInfo.ModTime().After(veryRecentThreshold) {
+			continue
+		}
+		pathHash, _ := parseHashComponents(candidate.hash)
+		versionKey := fm.generateVersionKey(fm.instanceID, candidate.baseName, candidate.ext, pathHash)
+		latest := latestByKey[versionKey]
+		if latest == nil || latest.filePath == candidate.filePath {
+			continue
+		}
+		if !candidate.fileInfo.ModTime().Before(recentTimeThreshold) {
+			continue
+		}
+		// Remove from index if present
+		_, dataHash := parseHashComponents(candidate.hash)
+		cacheKey := fm.generateCacheKey(fm.instanceID, candidate.baseName, candidate.ext, pathHash, dataHash)
+		if _, loaded := fm.fileIndex.LoadAndDelete(cacheKey); loaded {
+			atomic.AddInt64(&fm.cacheSize, -1)
+		}
+		// Delete inline (best-effort)
+		fm.processDeletionInline(candidate.filePath)
+	}
+
+	// Third pass: Remove stale index entries (files that no longer exist on disk)
+	// But ONLY if they're not recently accessed (to avoid race with GetTempCopy)
+	fm.fileIndex.Range(func(key, value any) bool {
+		entry := value.(*FileIndexEntry)
+
+		// Skip if recently accessed (likely in active use)
+		if entry.GetLastAccess().After(recentTimeThreshold) {
+			return true // Continue iteration
+		}
+
+		// Check if file exists on disk
+		if _, exists := diskFiles[entry.TempPath]; !exists {
+			// File not on disk and not recently accessed, remove from index
+			fm.fileIndex.Delete(key)
+			atomic.AddInt64(&fm.cacheSize, -1)
+		}
+
+		return true
+	})
+
+	// Fourth pass: perform LRU cleanup if cache size exceeds limit
+	fm.performCacheCleanup()
 }
 
 // extractBaseName extracts the base filename without path and extension for indexing.
@@ -428,45 +515,6 @@ func (fm *FileCopyManager) extractBaseName(originalPath string) string {
 		baseName = "file"
 	}
 	return baseName
-}
-
-// scheduleDelayedCleanup performs one-time cleanup after 1 minute delay from manager creation.
-// This cleans up unused files that haven't been accessed since manager creation.
-func (fm *FileCopyManager) scheduleDelayedCleanup() {
-	defer fm.wg.Done()
-
-	// Wait for 1 minute or until context is cancelled
-	select {
-	case <-fm.ctx.Done():
-		return // Context cancelled, exit without cleanup
-	case <-time.After(CleanupDelayAfterStart):
-		// Perform one-time cleanup of unused files
-		fm.performInitialCleanup()
-	}
-}
-
-// performInitialCleanup removes files that haven't been accessed since manager creation.
-// This implements the 1-minute delay cleanup strategy for unused files.
-func (fm *FileCopyManager) performInitialCleanup() {
-	// Clean up files that haven't been accessed since manager start
-	fm.fileIndex.Range(func(key, value any) bool {
-		entry := value.(*FileIndexEntry)
-		lastAccess := entry.GetLastAccess()
-		if lastAccess.Before(fm.startTime) || lastAccess.Equal(fm.startTime) {
-			// Queue for async deletion and remove from index
-			select {
-			case fm.deletionChan <- entry.TempPath:
-				fm.fileIndex.Delete(key)
-				atomic.AddInt64(&fm.cacheSize, -1)
-			default:
-				// Deletion channel is full, skip this file
-			}
-		}
-		return true
-	})
-
-	// Also clean up orphaned files on disk for this instance
-	fm.cleanupOrphanedFilesInternal()
 }
 
 // performCacheCleanup removes least recently used cache entries when cache size exceeds limit
@@ -500,67 +548,23 @@ func (fm *FileCopyManager) performCacheCleanup() {
 	})
 
 	// Remove oldest 25% of entries to make room for new ones
-	removeCount := max(1, len(entries)/4)
+	removeCount := len(entries) / 4
+	if removeCount < 1 {
+		removeCount = 1
+	}
 
 	for i := 0; i < removeCount && i < len(entries); i++ {
 		entry := entries[i]
 		fm.fileIndex.Delete(entry.key)
 		atomic.AddInt64(&fm.cacheSize, -1)
 
-		// Queue for async deletion
-		select {
-		case fm.deletionChan <- entry.entry.TempPath:
-		default:
-			// Channel full, delete synchronously
-			os.Remove(entry.entry.TempPath)
-		}
-	}
-}
-
-// cleanupOrphanedFilesInternal performs the actual cleanup without acquiring locks (internal use).
-func (fm *FileCopyManager) cleanupOrphanedFilesInternal() {
-	// Build set of indexed temporary file paths
-	indexedPaths := make(map[string]bool)
-	fm.fileIndex.Range(func(key, value any) bool {
-		entry := value.(*FileIndexEntry)
-		indexedPaths[entry.TempPath] = true
-		return true
-	})
-
-	// Scan temporary directory for orphaned files
-	entries, err := os.ReadDir(fm.tempDir)
-	if err != nil {
-		return // Directory doesn't exist or is inaccessible
-	}
-
-	now := time.Now()
-	expectedPrefix := fm.instanceID + "_+"
-
-	for _, entry := range entries {
-		if entry.IsDir() {
+		// Skip .tmp files (safety check - should not happen but防御性编程)
+		if strings.Contains(entry.entry.TempPath, ".tmp.") {
 			continue
 		}
 
-		// Only process files belonging to this specific instance
-		if !strings.HasPrefix(entry.Name(), expectedPrefix) {
-			continue
-		}
-
-		filePath := filepath.Join(fm.tempDir, entry.Name())
-
-		// Remove files not in index that exceed the cleanup threshold
-		if !indexedPaths[filePath] {
-			if info, err := entry.Info(); err == nil {
-				if now.Sub(info.ModTime()) > OrphanFileCleanupThreshold {
-					select {
-					case fm.deletionChan <- filePath:
-					default:
-						// Channel full, delete synchronously as fallback
-						os.Remove(filePath)
-					}
-				}
-			}
-		}
+		// Delete inline (best-effort)
+		fm.processDeletionInline(entry.entry.TempPath)
 	}
 }
 
@@ -587,12 +591,18 @@ func GetTempCopy(instanceID, originalPath string) (string, error) {
 
 // GetTempCopy implements optimized file copying with intelligent index-based lookup.
 // This eliminates repeated directory scanning and provides O(1) lookup performance.
+// Old file versions are cleaned up by the periodic cleanup worker, not here.
 func (fm *FileCopyManager) GetTempCopy(originalPath string) (string, error) {
 	// Validate original file and get metadata
 	stat, err := os.Stat(originalPath)
 	if err != nil {
 		return "", fmt.Errorf("original file does not exist: %w", err)
 	}
+
+	// Ensure only one goroutine copies the same source path at a time
+	lock := fm.getPathLock(originalPath)
+	lock.Lock()
+	defer lock.Unlock()
 
 	now := time.Now()
 	currentModTime := stat.ModTime()
@@ -602,79 +612,80 @@ func (fm *FileCopyManager) GetTempCopy(originalPath string) (string, error) {
 	// Update last access time for TTL cleanup (no lock needed for time.Time)
 	fm.lastAccess = now
 
-	// Generate expected content hash for comparison
-	expectedDataHash, err := fm.hashFileContent(originalPath, currentSize)
-	if err != nil {
-		expectedDataHash = fmt.Sprintf("%x", currentSize+currentModTime.UnixNano())[:16]
+	// Compute data hash once per policy under the per-path lock
+	var expectedDataHash string
+	if VersionDetection == VersionDetectSizeModTime {
+		hex := fmt.Sprintf("%x", currentSize+currentModTime.UnixNano())
+		if len(hex) > DataHashHexLen {
+			expectedDataHash = hex[:DataHashHexLen]
+		} else {
+			expectedDataHash = hex
+		}
+	} else {
+		expectedDataHash, err = fm.hashFileContent(originalPath, currentSize)
+		if err != nil {
+			hex := fmt.Sprintf("%x", currentSize+currentModTime.UnixNano())
+			if len(hex) > DataHashHexLen {
+				expectedDataHash = hex[:DataHashHexLen]
+			} else {
+				expectedDataHash = hex
+			}
+		} else if len(expectedDataHash) > DataHashHexLen {
+			expectedDataHash = expectedDataHash[:DataHashHexLen]
+		}
 	}
 
 	// Strategy 1: Check index for existing file using unified cache key
 	baseName := fm.extractBaseName(originalPath)
 	ext := extractFileExtension(originalPath)
-
-	// Use unified cache key generation
 	cacheKey := fm.generateCacheKey(fm.instanceID, baseName, ext, currentHash, expectedDataHash)
 
-	var oldTempPath string // Track old file to delete after successful creation
 	if value, exists := fm.fileIndex.Load(cacheKey); exists {
 		entry := value.(*FileIndexEntry)
-		// Found cached file, verify it still exists and matches
 		if _, err := os.Stat(entry.TempPath); err == nil && currentSize == entry.Size {
-			// File exists and size matches, reuse cached copy
-			entry.SetLastAccess(now)            // Update access time atomically
-			entry.SetOriginalPath(originalPath) // Update original path thread-safely
+			entry.SetLastAccess(now)
+			entry.SetOriginalPath(originalPath)
 			return entry.TempPath, nil
-		} else {
-			// Cached file is missing or size mismatch, remove from index
-			fm.fileIndex.Delete(cacheKey)
-			atomic.AddInt64(&fm.cacheSize, -1)
-			if err == nil {
-				// File exists but size mismatch, mark for cleanup
-				oldTempPath = entry.TempPath
-			}
 		}
+		// Remove stale index entry; physical deletion handled elsewhere
+		fm.fileIndex.Delete(cacheKey)
+		atomic.AddInt64(&fm.cacheSize, -1)
 	}
 
-	// Strategy 2: No valid cached file found, create new one
-	tempPath := fm.generateTempPath(originalPath)
+	// Strategy 2: No valid cached file found, create new one (avoid re-hashing)
+	tempPath := fm.generateTempPathWithHash(originalPath, expectedDataHash)
 
-	// Perform atomic file copy
 	if err := fm.atomicCopyFile(originalPath, tempPath); err != nil {
 		return "", err
 	}
 
-	// Add to index for future O(1) lookups using unified cache key
+	// Add to index using LoadOrStore to keep cacheSize accurate under races
 	newEntry := &FileIndexEntry{
 		TempPath:     tempPath,
 		OriginalPath: originalPath,
 		Size:         currentSize,
 		ModTime:      currentModTime,
-		lastAccess:   now.UnixNano(), // Use atomic field
+		lastAccess:   now.UnixNano(),
 		PathHash:     currentHash,
-		DataHash:     expectedDataHash, // Use the same dataHash we calculated earlier
+		DataHash:     expectedDataHash,
 		BaseName:     baseName,
-		Extension:    filepath.Ext(originalPath),
+		Extension:    ext, // normalized without dot
 	}
-	// Use the same cache key we tried to lookup earlier
-	fm.fileIndex.Store(cacheKey, newEntry)
-	atomic.AddInt64(&fm.cacheSize, 1)
-
-	// Check if cache size exceeds limit and trigger cleanup if needed
-	if atomic.LoadInt64(&fm.cacheSize) > MaxCacheEntries {
-		go fm.performCacheCleanup()
-	}
-
-	// Clean up old version after successful creation to prevent race conditions
-	if oldTempPath != "" {
-		select {
-		case fm.deletionChan <- oldTempPath:
-		default:
-			// Channel full, delete synchronously as fallback
-			os.Remove(oldTempPath)
-		}
+	if _, loaded := fm.fileIndex.LoadOrStore(cacheKey, newEntry); !loaded {
+		atomic.AddInt64(&fm.cacheSize, 1)
 	}
 
 	return tempPath, nil
+}
+
+// getPathLock returns a per-original-path mutex to serialize copy operations for the same source.
+func (fm *FileCopyManager) getPathLock(key string) *sync.Mutex {
+	if v, ok := fm.pathLocks.Load(key); ok {
+		return v.(*sync.Mutex)
+	}
+	m := &sync.Mutex{}
+	actual, _ := fm.pathLocks.LoadOrStore(key, m)
+	return actual.(*sync.Mutex)
 }
 
 // generateTempPath creates a unique temporary file path using a structured naming convention.
@@ -692,35 +703,53 @@ func (fm *FileCopyManager) generateTempPath(originalPath string) string {
 	}
 
 	// Limit baseName length to prevent filesystem errors (most filesystems have 255 char limit)
-	// Reserve space for: instanceID + "_+" + baseName + "_+" + ext + "_+" + pathHash + "_+" + dataHash + fileExt
-	// Roughly: instanceID (up to 50) + separators (8) + baseName + ext (up to 20) + pathHash (8) + dataHash (16) + fileExt (up to 10) = ~120+ chars
-	maxBaseNameLen := 100 // Conservative limit to stay well under 255
-	if len(baseName) > maxBaseNameLen {
-		baseName = baseName[:maxBaseNameLen]
+	// Reserve space for metadata in filename
+	if len(baseName) > MaxBaseNameLen {
+		baseName = baseName[:MaxBaseNameLen]
 	}
 
 	// Generate path hash for collision avoidance
 	pathHash := fm.hashString(originalPath)
-	if len(pathHash) > 8 {
-		pathHash = pathHash[:8]
+	if len(pathHash) > PathHashHexLen {
+		pathHash = pathHash[:PathHashHexLen]
 	}
 
-	// Get file stats for content hashing
+	// Generate content hash here is expensive and duplicates work with GetTempCopy.
+	// Keep this method for callers that don't pre-compute the data hash.
 	stat, err := os.Stat(originalPath)
+	var dataHash string
 	if err != nil {
-		// Fallback to timestamp-based hash if stat fails
-		dataHash := fmt.Sprintf("%x", time.Now().UnixNano())[:16]
-		return filepath.Join(fm.tempDir, fmt.Sprintf("%s_+%s_+%s_+%s_+%s%s",
-			fm.instanceID, baseName, strings.TrimPrefix(fileExt, "."), pathHash, dataHash, fileExt))
-	}
-
-	// Generate content hash for file integrity verification
-	dataHash, err := fm.hashFileContent(originalPath, stat.Size())
-	if err != nil {
-		// Fallback to size+modtime hash if content hashing fails
-		dataHash = fmt.Sprintf("%x", stat.Size()+stat.ModTime().UnixNano())[:16]
-	} else if len(dataHash) > 16 {
-		dataHash = dataHash[:16] // Truncate to reasonable length
+		hex := fmt.Sprintf("%x", time.Now().UnixNano())
+		if len(hex) > DataHashHexLen {
+			dataHash = hex[:DataHashHexLen]
+		} else {
+			dataHash = hex
+		}
+	} else {
+		// Respect version detection policy
+		if VersionDetection == VersionDetectSizeModTime {
+			hex := fmt.Sprintf("%x", stat.Size()+stat.ModTime().UnixNano())
+			if len(hex) > DataHashHexLen {
+				dataHash = hex[:DataHashHexLen]
+			} else {
+				dataHash = hex
+			}
+		} else {
+			if h, err2 := fm.hashFileContent(originalPath, stat.Size()); err2 == nil {
+				if len(h) > DataHashHexLen {
+					dataHash = h[:DataHashHexLen]
+				} else {
+					dataHash = h
+				}
+			} else {
+				hex := fmt.Sprintf("%x", stat.Size()+stat.ModTime().UnixNano())
+				if len(hex) > DataHashHexLen {
+					dataHash = hex[:DataHashHexLen]
+				} else {
+					dataHash = hex
+				}
+			}
+		}
 	}
 
 	// Clean extension (remove dot)
@@ -730,6 +759,40 @@ func (fm *FileCopyManager) generateTempPath(originalPath string) string {
 	}
 
 	// Construct temporary file path with new naming convention
+	return filepath.Join(fm.tempDir, fmt.Sprintf("%s_+%s_+%s_+%s_+%s%s",
+		fm.instanceID, baseName, cleanExt, pathHash, dataHash, fileExt))
+}
+
+// generateTempPathWithHash creates a temp path using a precomputed dataHash to avoid re-hashing.
+func (fm *FileCopyManager) generateTempPathWithHash(originalPath, dataHash string) string {
+	fileName := filepath.Base(originalPath)
+	fileExt := filepath.Ext(fileName)
+	baseName := fileName
+	if len(fileExt) > 0 && len(fileName) > len(fileExt) {
+		baseName = fileName[:len(fileName)-len(fileExt)]
+	}
+	if baseName == "" || baseName == fileExt {
+		baseName = "file"
+	}
+
+	if len(baseName) > MaxBaseNameLen {
+		baseName = baseName[:MaxBaseNameLen]
+	}
+
+	pathHash := fm.hashString(originalPath)
+	if len(pathHash) > PathHashHexLen {
+		pathHash = pathHash[:PathHashHexLen]
+	}
+
+	cleanExt := strings.TrimPrefix(fileExt, ".")
+	if cleanExt == "" {
+		cleanExt = "bin"
+	}
+
+	if len(dataHash) > DataHashHexLen {
+		dataHash = dataHash[:DataHashHexLen]
+	}
+
 	return filepath.Join(fm.tempDir, fmt.Sprintf("%s_+%s_+%s_+%s_+%s%s",
 		fm.instanceID, baseName, cleanExt, pathHash, dataHash, fileExt))
 }
@@ -776,6 +839,19 @@ func (fm *FileCopyManager) atomicCopyFile(src, dst string) error {
 		return fmt.Errorf("failed to close temporary file: %w", err)
 	}
 
+	// Verify temp file still exists before rename with retries (safety check against race conditions)
+	maxRetries := 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if _, err = os.Stat(tempDst); err == nil {
+			break // File exists, proceed with rename
+		}
+		if attempt < maxRetries-1 {
+			time.Sleep(10 * time.Millisecond) // Wait before retry
+		} else {
+			return fmt.Errorf("temporary file disappeared before rename after %d attempts: %w", maxRetries, err)
+		}
+	}
+
 	// Atomic rename to final destination
 	if err = os.Rename(tempDst, dst); err != nil {
 		return fmt.Errorf("failed to rename temporary file: %w", err)
@@ -784,12 +860,13 @@ func (fm *FileCopyManager) atomicCopyFile(src, dst string) error {
 	return nil
 }
 
-// hashString generates a 32-bit FNV-1a hash of the input string.
-// This is used for creating collision-resistant file identifiers and cache keys.
+// hashString generates a 64-bit hash of the input string.
+// Use xxhash (fast, well-distributed) to reduce collision risk for version grouping.
 func (fm *FileCopyManager) hashString(s string) string {
-	h := fnv.New32a()
-	h.Write([]byte(s))
-	return fmt.Sprintf("%x", h.Sum32())
+	h := xxhash.New()
+	// write never errors for xxhash
+	_, _ = h.Write([]byte(s))
+	return fmt.Sprintf("%x", h.Sum64())
 }
 
 // generateCacheKey creates a unified cache key for file indexing and lookup.
@@ -841,36 +918,27 @@ func Shutdown() {
 // Shutdown performs complete cleanup by removing all temporary files and cache entries.
 // This method ensures clean resource deallocation with proper goroutine lifecycle management.
 func (fm *FileCopyManager) Shutdown() {
-	// Cancel context to signal goroutines to stop
+	// Stop periodic cleanup first
 	fm.cancel()
 
-	// Remove all cached temporary files asynchronously
+	// Delete all cached temporary files inline (best-effort)
 	fm.fileIndex.Range(func(key, value any) bool {
 		entry := value.(*FileIndexEntry)
-		select {
-		case fm.deletionChan <- entry.TempPath:
-		default:
-			// Channel full, delete synchronously as fallback
-			os.Remove(entry.TempPath)
-		}
+		fm.processDeletionInline(entry.TempPath)
 		return true
 	})
 
-	// Clear all entries from sync.Map
+	// Clear all entries and reset cacheSize
 	fm.fileIndex.Range(func(key, value any) bool {
 		fm.fileIndex.Delete(key)
-		atomic.AddInt64(&fm.cacheSize, -1)
 		return true
 	})
-
-	// Close deletion channel to stop the async worker
-	close(fm.deletionChan)
+	atomic.StoreInt64(&fm.cacheSize, 0)
 
 	// Wait for all goroutines to finish properly
 	fm.wg.Wait()
 
 	// Note: Do NOT remove the shared temp directory here as other instances may still be using it
-	// The temp directory will be cleaned up by the OS when the process exits
 }
 
 // getProcessName extracts and sanitizes the current process name for use in temporary directory naming.
