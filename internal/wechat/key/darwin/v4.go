@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
-	"fmt"
 	"runtime"
 	"sync"
 
@@ -17,16 +16,17 @@ import (
 )
 
 const (
-	MaxWorkers        = 8
-	MinChunkSize      = 1 * 1024 * 1024 // 1MB
-	ChunkOverlapBytes = 1024            // Greater than all offsets
-	ChunkMultiplier   = 2               // Number of chunks = MaxWorkers * ChunkMultiplier
+	MaxWorkers = 8
 )
 
 var V4KeyPatterns = []KeyPatternInfo{
 	{
 		Pattern: []byte{0x20, 0x66, 0x74, 0x73, 0x35, 0x28, 0x25, 0x00},
 		Offsets: []int{16, -80, 64},
+	},
+	{
+		Pattern: []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+		Offsets: []int{-32},
 	},
 }
 
@@ -71,7 +71,7 @@ func (e *V4Extractor) Extract(ctx context.Context, proc *model.Process) (string,
 	defer cancel()
 
 	// Create channels for memory data and results
-	memoryChannel := make(chan []byte, 100)
+	memoryChannel := make(chan []byte, 200)
 	resultChannel := make(chan [2]string, 1)
 
 	// Determine number of worker goroutines
@@ -151,81 +151,8 @@ func (e *V4Extractor) findMemory(ctx context.Context, pid uint32, memoryChannel 
 	// Initialize a Glance instance to read process memory
 	g := glance.NewGlance(pid)
 
-	// Read memory data
-	memory, err := g.Read()
-	if err != nil {
-		return err
-	}
-
-	totalSize := len(memory)
-	log.Debug().Msgf("Read memory region, size: %d bytes", totalSize)
-
-	// If memory is small enough, process it as a single chunk
-	if totalSize <= MinChunkSize {
-		select {
-		case memoryChannel <- memory:
-			log.Debug().Msg("Memory sent as a single chunk for analysis")
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-		return nil
-	}
-
-	chunkCount := MaxWorkers * ChunkMultiplier
-
-	// Calculate chunk size based on fixed chunk count
-	chunkSize := totalSize / chunkCount
-	if chunkSize < MinChunkSize {
-		// Reduce number of chunks if each would be too small
-		chunkCount = totalSize / MinChunkSize
-		if chunkCount == 0 {
-			chunkCount = 1
-		}
-		chunkSize = totalSize / chunkCount
-	}
-
-	// Process memory in chunks from end to beginning
-	for i := chunkCount - 1; i >= 0; i-- {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			// Calculate start and end positions for this chunk
-			start := i * chunkSize
-			end := (i + 1) * chunkSize
-
-			// Ensure the last chunk includes all remaining memory
-			if i == chunkCount-1 {
-				end = totalSize
-			}
-
-			// Add overlap area to catch patterns at chunk boundaries
-			if i > 0 {
-				start -= ChunkOverlapBytes
-				if start < 0 {
-					start = 0
-				}
-			}
-
-			chunk := memory[start:end]
-
-			log.Debug().
-				Int("chunk_index", i+1).
-				Int("total_chunks", chunkCount).
-				Int("chunk_size", len(chunk)).
-				Str("start_offset", fmt.Sprintf("%X", start)).
-				Str("end_offset", fmt.Sprintf("%X", end)).
-				Msg("Processing memory chunk")
-
-			select {
-			case memoryChannel <- chunk:
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-	}
-
-	return nil
+	// Use the Read2Chan method to read and chunk memory
+	return g.Read2Chan(ctx, memoryChannel)
 }
 
 // worker processes memory regions to find V4 version key
@@ -289,6 +216,7 @@ func (e *V4Extractor) worker(ctx context.Context, memoryChannel <-chan []byte, r
 func (e *V4Extractor) SearchKey(ctx context.Context, memory []byte) (string, bool) {
 	for _, keyPattern := range e.dataKeyPatterns {
 		index := len(memory)
+		zeroPattern := bytes.Equal(keyPattern.Pattern, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 
 		for {
 			select {
@@ -303,11 +231,26 @@ func (e *V4Extractor) SearchKey(ctx context.Context, memory []byte) (string, boo
 				break // No more matches found
 			}
 
+			// align to 16 bytes
+			if zeroPattern {
+				index = bytes.LastIndexFunc(memory[:index], func(r rune) bool {
+					return r != 0
+				})
+				if index == -1 {
+					break // No more matches found
+				}
+				index += 1
+			}
+
 			// Try each offset for this pattern
 			for _, offset := range keyPattern.Offsets {
 				// Check if we have enough space for the key
 				keyOffset := index + offset
 				if keyOffset < 0 || keyOffset+32 > len(memory) {
+					continue
+				}
+
+				if bytes.Contains(memory[keyOffset:keyOffset+32], []byte{0x00, 0x00}) {
 					continue
 				}
 
@@ -378,7 +321,7 @@ func (e *V4Extractor) SearchImgKey(ctx context.Context, memory []byte) (string, 
 					continue
 				}
 
-				if bytes.Equal(memory[keyOffset:keyOffset+16], []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}) {
+				if bytes.Contains(memory[keyOffset:keyOffset+16], []byte{0x00, 0x00}) {
 					continue
 				}
 

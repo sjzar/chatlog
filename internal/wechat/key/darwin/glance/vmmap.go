@@ -12,9 +12,12 @@ import (
 )
 
 const (
-	FilterRegionType = "MALLOC_NANO"
-	FilterSHRMOD     = "SM=PRV"
-	CommandVmmap     = "vmmap"
+	FilterRegionType  = "MALLOC_NANO"
+	FilterRegionType2 = "MALLOC_SMALL"
+	FilterSHRMOD      = "SM=PRV"
+	EmptyFlag         = "(empty)"
+	CommandVmmap      = "vmmap"
+	CommandUname      = "uname"
 )
 
 type MemRegion struct {
@@ -26,6 +29,7 @@ type MemRegion struct {
 	SHRMOD       string
 	Permissions  string
 	RegionDetail string
+	Empty        bool
 }
 
 func GetVmmap(pid uint32) ([]MemRegion, error) {
@@ -95,6 +99,7 @@ func LoadVmmap(output string) ([]MemRegion, error) {
 				Permissions:  matches[6],                    // Shifted index
 				SHRMOD:       matches[7],                    // Shifted index
 				RegionDetail: strings.TrimSpace(matches[8]), // Shifted index
+				Empty:        strings.Contains(line, EmptyFlag),
 			}
 
 			regions = append(regions, region)
@@ -104,10 +109,31 @@ func LoadVmmap(output string) ([]MemRegion, error) {
 	return regions, nil
 }
 
+// DarwinVersion returns the Darwin kernel version string (e.g., "25.0.0")
+func DarwinVersion() string {
+	cmd := exec.Command(CommandUname, "-r")
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
+}
+
 func MemRegionsFilter(regions []MemRegion) []MemRegion {
 	var filteredRegions []MemRegion
+
+	// Determine which region type to filter based on Darwin version
+	version := DarwinVersion()
+	targetRegionType := FilterRegionType // Default to MALLOC_NANO
+	if strings.HasPrefix(version, "25") {
+		targetRegionType = FilterRegionType2 // Use MALLOC_SMALL for Darwin 25.x
+	}
+
 	for _, region := range regions {
-		if region.RegionType == FilterRegionType {
+		if region.Empty {
+			continue
+		}
+		if region.RegionType == targetRegionType {
 			filteredRegions = append(filteredRegions, region)
 		}
 	}

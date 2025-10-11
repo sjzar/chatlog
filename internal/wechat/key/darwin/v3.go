@@ -116,80 +116,8 @@ func (e *V3Extractor) findMemory(ctx context.Context, pid uint32, memoryChannel 
 	// Initialize a Glance instance to read process memory
 	g := glance.NewGlance(pid)
 
-	// Read memory data
-	memory, err := g.Read()
-	if err != nil {
-		return err
-	}
-
-	totalSize := len(memory)
-	log.Debug().Msgf("Read memory region, size: %d bytes", totalSize)
-
-	// If memory is small enough, process it as a single chunk
-	if totalSize <= MinChunkSize {
-		select {
-		case memoryChannel <- memory:
-			log.Debug().Msg("Memory sent as a single chunk for analysis")
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-		return nil
-	}
-
-	chunkCount := MaxWorkers * ChunkMultiplier
-
-	// Calculate chunk size based on fixed chunk count
-	chunkSize := totalSize / chunkCount
-	if chunkSize < MinChunkSize {
-		// Reduce number of chunks if each would be too small
-		chunkCount = totalSize / MinChunkSize
-		if chunkCount == 0 {
-			chunkCount = 1
-		}
-		chunkSize = totalSize / chunkCount
-	}
-
-	// Process memory in chunks from end to beginning
-	for i := chunkCount - 1; i >= 0; i-- {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			// Calculate start and end positions for this chunk
-			start := i * chunkSize
-			end := (i + 1) * chunkSize
-
-			// Ensure the last chunk includes all remaining memory
-			if i == chunkCount-1 {
-				end = totalSize
-			}
-
-			// Add overlap area to catch patterns at chunk boundaries
-			if i > 0 {
-				start -= ChunkOverlapBytes
-				if start < 0 {
-					start = 0
-				}
-			}
-
-			chunk := memory[start:end]
-
-			log.Debug().
-				Int("chunk_index", i+1).
-				Int("total_chunks", chunkCount).
-				Int("chunk_size", len(chunk)).
-				Int("start_offset", start).
-				Int("end_offset", end).
-				Msg("Processing memory chunk")
-
-			select {
-			case memoryChannel <- chunk:
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-	}
-	return nil
+	// Use the Read2Chan method to read and chunk memory
+	return g.Read2Chan(ctx, memoryChannel)
 }
 
 // worker processes memory regions to find V3 version key
