@@ -51,10 +51,18 @@ func NewImgKeyValidator(path string) *AesKeyValidator {
 		return nil
 	})
 
+	// image data not found
+	if len(validator.EncryptedData) == 0 {
+		return nil
+	}
+
 	return validator
 }
 
 func (v *AesKeyValidator) Validate(key []byte) bool {
+	if len(v.EncryptedData) == 0 {
+		return false
+	}
 	if len(key) < 16 {
 		return false
 	}
